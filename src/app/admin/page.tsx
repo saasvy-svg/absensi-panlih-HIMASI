@@ -17,10 +17,13 @@ import {
   AlertTriangle,
   UserCheck,
   X,
-  ShieldCheck
+  ShieldCheck,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import Link from 'next/link';
+import { createClient } from '@/utils/supabase/client';
 
 export default function AdminMonitoringPage() {
   const [loading, setLoading] = useState(true);
@@ -51,15 +54,73 @@ export default function AdminMonitoringPage() {
   });
 
   const [classesList, setClassesList] = useState<string[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Subtle audio notification chime using Web Audio API
+  const playNotificationSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12); // A5
+      gain.gain.setValueAtTime(0.06, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.22);
+    } catch (e) {}
+  };
 
   useEffect(() => {
     fetchMonitoringData();
-    // Auto-refresh every 10 seconds for real-time monitoring
+
+    // 1. Supabase Realtime Listener (Otomatis update detik itu juga saat ada yang absen)
+    const supabase = createClient();
+    const channel = supabase
+      .channel('realtime:admin-monitoring')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'attendances',
+        },
+        (payload: any) => {
+          fetchMonitoringData(true);
+          if (payload.eventType === 'INSERT') {
+            const studentName = payload.new?.name || 'Seorang peserta';
+            const status = payload.new?.status || 'Hadir';
+            toast.info(`🔔 ${studentName} baru saja presensi (${status})!`, {
+              duration: 4000,
+            });
+            if (soundEnabled) {
+              playNotificationSound();
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    // 2. Fallback auto-polling tiap 3 detik (tanpa reload halaman / anti-flicker)
     const interval = setInterval(() => {
       fetchMonitoringData(true);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [date, selectedClass]);
+    }, 3000);
+
+    // 3. Auto-refresh instan saat admin membuka kembali tab browser
+    const handleFocus = () => fetchMonitoringData(true);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [date, selectedClass, soundEnabled]);
 
   const fetchMonitoringData = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
@@ -190,15 +251,42 @@ export default function AdminMonitoringPage() {
       {/* Top Header & Action Buttons */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-2 border-b border-black/5">
         <div>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
             <h1 className="text-xl sm:text-2xl font-bold text-[#111827] tracking-tight flex items-center gap-2">
               <LayoutDashboard className="text-[#2563EB]" size={26} />
               Monitoring Kehadiran Mahasiswa
             </h1>
-            <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Real-Time
+              Auto-Refresh Live
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                const nextState = !soundEnabled;
+                setSoundEnabled(nextState);
+                if (nextState) {
+                  playNotificationSound();
+                  toast.success('Suara notifikasi absen diaktifkan');
+                } else {
+                  toast.info('Suara notifikasi absen dinonaktifkan (Mute)');
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gray-100 hover:bg-gray-200 text-[#4B5563] text-[11px] font-semibold border border-gray-200 transition-all cursor-pointer"
+              title={soundEnabled ? 'Klik untuk mematikan suara notifikasi' : 'Klik untuk menyalakan suara notifikasi'}
+            >
+              {soundEnabled ? (
+                <>
+                  <Volume2 size={12} className="text-emerald-600" />
+                  <span>Suara Aktif</span>
+                </>
+              ) : (
+                <>
+                  <VolumeX size={12} className="text-gray-400" />
+                  <span>Mute</span>
+                </>
+              )}
+            </button>
           </div>
           <p className="text-xs text-[#6B7280]">
             Pantau kehadiran, lakukan override absensi jika HP mahasiswa terkendala, dan sinkronkan ke Google Sheets.
