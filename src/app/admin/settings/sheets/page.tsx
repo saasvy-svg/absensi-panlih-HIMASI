@@ -25,7 +25,7 @@ export default function SheetsSettingsPage() {
 
   const [sheetId, setSheetId] = useState('');
   const [sheetName, setSheetName] = useState('Presensi');
-  const [syncMode, setSyncMode] = useState<'manual' | 'realtime'>('manual');
+  const [syncMode, setSyncMode] = useState<'manual' | 'realtime'>('realtime');
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function SheetsSettingsPage() {
         if (data.config) {
           setSheetId(data.config.sheet_id || '');
           setSheetName(data.config.sheet_name || 'Presensi');
-          setSyncMode(data.config.sync_mode || 'manual');
+          setSyncMode(data.config.sync_mode || 'realtime');
           setLastSyncedAt(data.config.last_synced_at || null);
         }
       }

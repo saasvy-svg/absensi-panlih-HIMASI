@@ -127,10 +127,21 @@ export default function AdminMonitoringPage() {
     fetchMonitoringData();
     fetchAntiTitipStatus();
 
-    // 1. Supabase Realtime Listener (Otomatis update detik itu juga saat ada yang absen)
+    // 1. Supabase Realtime WebSocket (Broadcast 0-detik + Postgres Changes)
     const supabase = createClient();
     const channel = supabase
-      .channel('realtime:admin-monitoring')
+      .channel('himasi-live-sync')
+      .on('broadcast', { event: 'attendance_checkin' }, (payload: any) => {
+        fetchMonitoringData(true);
+        const studentName = payload.payload?.name || 'Seorang peserta';
+        const st = payload.payload?.status || 'Hadir';
+        toast.info(`🔔 ${studentName} baru saja presensi (${st})!`, {
+          duration: 4000,
+        });
+        if (soundEnabled) {
+          playNotificationSound();
+        }
+      })
       .on(
         'postgres_changes',
         {
@@ -154,10 +165,10 @@ export default function AdminMonitoringPage() {
       )
       .subscribe();
 
-    // 2. Fallback auto-polling tiap 3 detik (tanpa reload halaman / anti-flicker)
+    // 2. Fallback auto-polling super cepat tiap 1.5 detik (tanpa reload halaman / anti-flicker)
     const interval = setInterval(() => {
       fetchMonitoringData(true);
-    }, 3000);
+    }, 1500);
 
     // 3. Auto-refresh instan saat admin membuka kembali tab browser
     const handleFocus = () => fetchMonitoringData(true);
