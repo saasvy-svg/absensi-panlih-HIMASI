@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { syncCategorizedWithMasterRoster } from '@/lib/googleSheets';
+import { getWIBDate } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const date = searchParams.get('date') || getWIBDate();
 
     const supabase = createAdminClient();
 

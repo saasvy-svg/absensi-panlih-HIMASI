@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { normalizeAngkatan } from '@/utils/angkatan';
+import { getWIBDate } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const date = searchParams.get('date') || getWIBDate();
     const className = searchParams.get('class');
 
     const supabase = createAdminClient();

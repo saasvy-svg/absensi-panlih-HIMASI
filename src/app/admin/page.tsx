@@ -21,7 +21,7 @@ import {
   Volume2,
   VolumeX
 } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { formatDate, getWIBDate } from '@/lib/utils';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/client';
 
@@ -30,7 +30,7 @@ export default function AdminMonitoringPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncingSheets, setSyncingSheets] = useState(false);
 
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => getWIBDate());
   const [selectedClass, setSelectedClass] = useState('all');
   const [activeTab, setActiveTab] = useState<'all' | 'present' | 'absent'>('all');
   const [search, setSearch] = useState('');
