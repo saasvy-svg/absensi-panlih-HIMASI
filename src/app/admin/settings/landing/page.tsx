@@ -1,0 +1,800 @@
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { 
+  Image as ImageIcon, 
+  Save, 
+  Loader2, 
+  Trash2, 
+  ExternalLink, 
+  Building2, 
+  UploadCloud,
+  Eye,
+  FileText,
+  UserCheck,
+  Plus
+} from 'lucide-react';
+import Link from 'next/link';
+
+export default function LandingSettingsPage() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
+
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+
+  const [form, setForm] = useState({
+    institution_name: '',
+    page_title: '',
+    page_subtitle: '',
+    announcement: '',
+    logo_url: '',
+    hero_images: [] as string[],
+    extra_texts: {
+      badge_text: 'Presensi Dibuka',
+      instruction_title: 'Panduan Presensi Mahasiswa',
+      instructions: [
+        'Masukkan NIM lengkap Anda pada kolom yang tersedia di formulir sebelah.',
+        'Pastikan Nama dan Angkatan yang muncul otomatis sudah sesuai dengan identitas Anda.',
+        'Setiap mahasiswa hanya dapat melakukan absensi 1 kali per hari perkuliahan.',
+        'Jika berhalangan, pilih opsi Izin atau Sakit dan cantumkan alasan yang jelas.',
+      ],
+      lecturers: [] as string[],
+      card1_title: 'Waktu Presensi',
+      card1_desc: '07.00 - 17.00 WIB',
+      card2_title: 'Presisi NIM',
+      card2_desc: 'Anti-typo & Auto-fill',
+      card3_title: 'Sinkronisasi',
+      card3_desc: 'Terkoneksi Sheets',
+      footer_text: 'Sistem Absensi Terintegrasi.',
+    },
+  });
+
+  const [instructionText, setInstructionText] = useState('');
+  const [manualImageUrl, setManualImageUrl] = useState('');
+  const [newLecturer, setNewLecturer] = useState('');
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/admin/settings/landing');
+      const data = await res.json();
+      if (res.ok && data.data) {
+        setForm({
+          institution_name: data.data.institution_name || '',
+          page_title: data.data.page_title || '',
+          page_subtitle: data.data.page_subtitle || '',
+          announcement: data.data.announcement || '',
+          logo_url: data.data.logo_url || '',
+          hero_images: data.data.hero_images || [],
+          extra_texts: data.data.extra_texts || form.extra_texts,
+        });
+
+        if (data.data.extra_texts?.instructions) {
+          setInstructionText(data.data.extra_texts.instructions.join('\n'));
+        }
+      }
+    } catch (e) {
+      toast.error('Gagal memuat pengaturan tampilan');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper auto-save to database immediately when logo or banner changes
+  const autoSaveMedia = async (newLogoUrl?: string, newHeroImages?: string[]) => {
+    try {
+      const payload = {
+        ...form,
+        logo_url: newLogoUrl !== undefined ? newLogoUrl : form.logo_url,
+        hero_images: newHeroImages !== undefined ? newHeroImages : form.hero_images,
+      };
+
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+    } catch (e) {
+      console.error('Auto save error:', e);
+    }
+  };
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>, type: 'logo' | 'banner') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isLogo = type === 'logo';
+    if (isLogo) setUploadingLogo(true);
+    else setUploadingBanner(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('folder', isLogo ? 'logos' : 'banners');
+
+      const res = await fetch('/api/admin/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.url) {
+        if (isLogo) {
+          setForm((prev) => ({ ...prev, logo_url: data.url }));
+          await autoSaveMedia(data.url, undefined);
+          toast.success('Logo berhasil di-upload dan LANGSUNG AKTIF di halaman depan! 🎉');
+        } else {
+          const nextImages = [...form.hero_images, data.url];
+          setForm((prev) => ({ ...prev, hero_images: nextImages }));
+          await autoSaveMedia(undefined, nextImages);
+          toast.success('Banner berhasil di-upload dan LANGSUNG AKTIF di halaman depan! 🎉');
+        }
+      } else {
+        toast.error(data.error || 'Gagal mengunggah file.');
+      }
+    } catch (err: any) {
+      toast.error('Terjadi kesalahan saat upload ke server.');
+    } finally {
+      if (isLogo) setUploadingLogo(false);
+      else setUploadingBanner(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleAddManualImage = async (urlToAdd: string) => {
+    const url = urlToAdd.trim();
+    if (!url) return;
+    if (form.hero_images.includes(url)) {
+      toast.warning('Gambar ini sudah ada di galeri banner.');
+      return;
+    }
+    const nextImages = [...form.hero_images, url];
+    setForm((prev) => ({ ...prev, hero_images: nextImages }));
+    setManualImageUrl('');
+    await autoSaveMedia(undefined, nextImages);
+    toast.success('Foto banner ditambahkan & disimpan!');
+  };
+
+  const handleRemoveImage = async (index: number) => {
+    const updated = form.hero_images.filter((_, idx) => idx !== index);
+    setForm((prev) => ({ ...prev, hero_images: updated }));
+    await autoSaveMedia(undefined, updated);
+    toast.info('Foto banner dihapus dari database');
+  };
+
+  const handleRemoveLogo = async () => {
+    setForm((prev) => ({ ...prev, logo_url: '' }));
+    await autoSaveMedia('', undefined);
+    toast.info('Logo dihapus dari database');
+  };
+
+  // Lecturer Management
+  const handleAddLecturer = async () => {
+    const name = newLecturer.trim();
+    if (!name) return;
+    const currentLecturers = form.extra_texts?.lecturers || [];
+    if (currentLecturers.includes(name)) {
+      toast.warning('Dosen ini sudah ada dalam daftar.');
+      return;
+    }
+    const updatedLecturers = [...currentLecturers, name];
+    const updatedExtra = { ...form.extra_texts, lecturers: updatedLecturers };
+    setForm((prev) => ({ ...prev, extra_texts: updatedExtra }));
+    setNewLecturer('');
+
+    try {
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, extra_texts: updatedExtra }),
+      });
+      toast.success(`Dosen "${name}" berhasil ditambahkan & langsung aktif! 🎉`);
+    } catch (e) {
+      toast.error('Gagal menyimpan data dosen');
+    }
+  };
+
+  const handleRemoveLecturer = async (index: number) => {
+    const currentLecturers = form.extra_texts?.lecturers || [];
+    const removed = currentLecturers[index];
+    const updatedLecturers = currentLecturers.filter((_, idx) => idx !== index);
+    const updatedExtra = { ...form.extra_texts, lecturers: updatedLecturers };
+    setForm((prev) => ({ ...prev, extra_texts: updatedExtra }));
+
+    try {
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, extra_texts: updatedExtra }),
+      });
+      toast.info(`Dosen "${removed}" dihapus`);
+    } catch (e) {
+      toast.error('Gagal memperbarui data dosen');
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+
+    const parsedInstructions = instructionText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const payload = {
+      ...form,
+      extra_texts: {
+        ...form.extra_texts,
+        instructions: parsedInstructions.length > 0 ? parsedInstructions : form.extra_texts.instructions,
+      },
+    };
+
+    try {
+      const res = await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+        toast.success('Seluruh pengaturan tampilan dan teks berhasil disimpan!');
+      } else {
+        toast.error(data.error || 'Gagal menyimpan perubahan');
+      }
+    } catch (e) {
+      toast.error('Terjadi kesalahan jaringan');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-[#2563EB]" />
+          <p className="text-xs text-gray-500 font-medium">Memuat pengaturan kustomisasi...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl space-y-8 animate-in fade-in duration-200">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[#111827] tracking-tight flex items-center gap-2.5">
+            <ImageIcon className="text-[#2563EB]" size={26} />
+            Kustomisasi Tampilan & Dosen
+          </h1>
+          <p className="text-xs text-[#6B7280] mt-1">
+            Unggah logo, banner kegiatan, kelola daftar dosen, dan atur seluruh teks landing page.
+          </p>
+        </div>
+
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white text-[#4B5563] hover:text-[#2563EB] border border-gray-200 rounded-xl text-xs font-semibold shadow-2xs hover:bg-gray-50 transition-all self-start cursor-pointer"
+        >
+          <Eye size={14} />
+          <span>Buka Halaman Mahasiswa</span>
+          <ExternalLink size={12} className="text-gray-400" />
+        </Link>
+      </div>
+
+      <form onSubmit={handleSave} className="space-y-6">
+        {/* BAGIAN 1: UPLOAD LOGO */}
+        <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+              <Building2 size={16} />
+              1. Logo Instansi / Kampus / Acara
+            </h2>
+            <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              Auto-Save Aktif
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-5 pt-2">
+            <div className="w-20 h-20 rounded-2xl border-2 border-dashed border-gray-300 bg-[#F8F9FA] flex items-center justify-center p-2 relative shrink-0 overflow-hidden">
+              {form.logo_url ? (
+                <img src={form.logo_url} alt="Logo" className="max-w-full max-h-full object-contain" />
+              ) : (
+                <div className="text-center text-gray-400">
+                  <ImageIcon size={24} className="mx-auto mb-1 text-gray-300" />
+                  <span className="text-[9px] block">Belum ada logo</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 space-y-2 w-full text-center sm:text-left">
+              <input
+                type="file"
+                ref={logoInputRef}
+                onChange={(e) => handleUploadFile(e, 'logo')}
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                className="hidden"
+              />
+              <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={uploadingLogo}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+                >
+                  <UploadCloud size={15} className={uploadingLogo ? 'animate-spin' : ''} />
+                  <span>{uploadingLogo ? 'Mengunggah & Menyimpan...' : 'Pilih File Logo dari Laptop/HP'}</span>
+                </button>
+                {form.logo_url && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveLogo}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-semibold rounded-xl border border-rose-200 transition-all cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                    <span>Hapus Logo</span>
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-[#6B7280]">
+                Mendukung PNG transparan, SVG, JPG, atau WebP. Sekali diupload langsung otomatis tersimpan.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* BAGIAN 2: UPLOAD FOTO BANNER DINAMIS */}
+        <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                <ImageIcon size={16} />
+                2. Galeri Foto Banner Dinamis
+              </h2>
+              <p className="text-xs text-[#6B7280] mt-1">
+                Foto-foto ini akan berganti secara otomatis di slider halaman mahasiswa.
+              </p>
+            </div>
+            <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              Auto-Save Aktif
+            </span>
+          </div>
+
+          {/* Upload Button */}
+          <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-[#1D4ED8]">
+                Upload Foto Kegiatan Kampus / Acara:
+              </p>
+              <p className="text-[11px] text-[#1E3A8A]">
+                Foto yang kamu upload otomatis masuk ke database dan langsung tampil di halaman depan.
+              </p>
+            </div>
+
+            <input
+              type="file"
+              ref={bannerInputRef}
+              onChange={(e) => handleUploadFile(e, 'banner')}
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => bannerInputRef.current?.click()}
+              disabled={uploadingBanner}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              <UploadCloud size={16} className={uploadingBanner ? 'animate-spin' : ''} />
+              <span>{uploadingBanner ? 'Mengunggah & Menyimpan...' : 'Upload Foto Banner Baru'}</span>
+            </button>
+          </div>
+
+          {/* Input Manual URL (Opsional) */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="url"
+              value={manualImageUrl}
+              onChange={(e) => setManualImageUrl(e.target.value)}
+              placeholder="Atau tempel URL gambar langsung (https://...)"
+              className="flex-1 bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs text-[#111827] outline-hidden transition-all"
+            />
+            <button
+              type="button"
+              onClick={() => handleAddManualImage(manualImageUrl)}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-[#374151] rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer"
+            >
+              + Tambah URL
+            </button>
+          </div>
+
+          {/* Active Banners Grid */}
+          <div className="space-y-2 pt-2">
+            <h3 className="text-xs font-bold text-[#111827]">
+              Foto yang Sedang Aktif ({form.hero_images.length})
+            </h3>
+
+            {form.hero_images.length === 0 ? (
+              <div className="p-8 text-center bg-[#F8F9FA] rounded-2xl border border-dashed border-gray-300 text-xs text-gray-500 space-y-1">
+                <ImageIcon size={28} className="mx-auto text-gray-400 mb-1" />
+                <p className="font-semibold text-[#111827]">Belum ada foto yang di-upload</p>
+                <p className="text-[11px] text-[#6B7280]">
+                  Klik tombol biru <b>"Upload Foto Banner Baru"</b> di atas untuk menambahkan foto dokumentasi/kegiatan kamu.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {form.hero_images.map((imgUrl, index) => (
+                  <div
+                    key={index}
+                    className="relative group rounded-xl overflow-hidden border border-black/10 aspect-video bg-gray-100"
+                  >
+                    <img src={imgUrl} alt={`Banner #${index + 1}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImage(index)}
+                        className="p-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm transition-transform active:scale-95 cursor-pointer"
+                        title="Hapus foto ini"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    <span className="absolute bottom-1.5 left-1.5 bg-black/60 text-white text-[10px] font-mono px-2 py-0.5 rounded-md">
+                      #{index + 1}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* BAGIAN 3: KELOLA DAFTAR DOSEN */}
+        <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                <UserCheck size={16} />
+                3. Kelola Daftar Dosen
+              </h2>
+              <p className="text-xs text-[#6B7280] mt-1">
+                Daftar dosen ini akan muncul pada pilihan dropdown saat tab 'Presensi Dosen' dipilih di halaman depan.
+              </p>
+            </div>
+            <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+              Auto-Save Aktif
+            </span>
+          </div>
+
+          {/* Form Tambah Dosen */}
+          <div className="flex flex-col sm:flex-row gap-2 pt-2">
+            <input
+              type="text"
+              value={newLecturer}
+              onChange={(e) => setNewLecturer(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddLecturer();
+                }
+              }}
+              placeholder="Masukkan Nama Dosen & Gelar (Contoh: Dr. Ir. Budi Santoso, M.Kom)"
+              className="flex-1 bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs text-[#111827] outline-hidden transition-all"
+            />
+            <button
+              type="button"
+              onClick={handleAddLecturer}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              <Plus size={15} />
+              <span>+ Tambah Dosen</span>
+            </button>
+          </div>
+
+          {/* List Dosen */}
+          <div className="space-y-2 pt-1">
+            <label className="block text-xs font-bold text-[#111827]">
+              Dosen yang Sedang Aktif ({form.extra_texts?.lecturers?.length || 0}):
+            </label>
+
+            {!form.extra_texts?.lecturers || form.extra_texts.lecturers.length === 0 ? (
+              <div className="p-4 bg-[#F8F9FA] rounded-xl border border-dashed border-gray-200 text-xs text-gray-400 text-center">
+                Belum ada dosen yang ditambahkan. Tambahkan dosen di atas agar mahasiswa bisa memilih dosen saat absensi.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {form.extra_texts.lecturers.map((doc, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8F9FA] border border-black/5 hover:border-blue-200 transition-all text-xs"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-blue-100 text-[#2563EB] text-[10px] font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <span className="font-semibold text-[#111827]">{doc}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveLecturer(idx)}
+                      className="text-gray-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"
+                      title="Hapus dosen"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* BAGIAN 4: KUSTOMISASI SEMUA TEKS */}
+        <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
+          <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+            <FileText size={16} />
+            4. Kustomisasi Seluruh Teks Halaman
+          </h2>
+
+          {/* Row 1: Nama & Badge */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+                Nama Instansi / Perguruan Tinggi / Nama Acara <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.institution_name}
+                onChange={(e) => setForm({ ...form, institution_name: e.target.value })}
+                placeholder="Contoh: Pemira HIMASI 2026/2027"
+                required
+                className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs font-semibold text-[#111827] outline-hidden transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+                Teks Badge Status (Pojok Kanan Atas Navbar)
+              </label>
+              <input
+                type="text"
+                value={form.extra_texts?.badge_text || ''}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    extra_texts: { ...form.extra_texts, badge_text: e.target.value },
+                  })
+                }
+                placeholder="Contoh: Presensi Dibuka / Pemilihan Aktif"
+                className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs font-semibold text-[#111827] outline-hidden transition-all"
+              />
+            </div>
+          </div>
+
+          {/* Row 2: Judul & Subjudul */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+                Judul Utama Presensi
+              </label>
+              <input
+                type="text"
+                value={form.page_title}
+                onChange={(e) => setForm({ ...form, page_title: e.target.value })}
+                placeholder="Presensi Pemilihan Raya Mahasiswa"
+                className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs font-semibold text-[#111827] outline-hidden transition-all"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+                Subjudul di Bawah Logo
+              </label>
+              <input
+                type="text"
+                value={form.page_subtitle}
+                onChange={(e) => setForm({ ...form, page_subtitle: e.target.value })}
+                placeholder="Portal Presensi Kehadiran Pemira HIMASI"
+                className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs font-semibold text-[#111827] outline-hidden transition-all"
+              />
+            </div>
+          </div>
+
+          {/* Pengumuman */}
+          <div>
+            <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+              Teks Pengumuman Banner (Kosongkan jika tidak ingin ditampilkan)
+            </label>
+            <textarea
+              value={form.announcement}
+              onChange={(e) => setForm({ ...form, announcement: e.target.value })}
+              rows={2}
+              placeholder="Contoh: Batas absensi matakuliah dibuka mulai jam 07:00 hingga 17:00 WIB."
+              className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs text-[#111827] outline-hidden transition-all"
+            />
+          </div>
+
+          {/* 3 Highlight Cards */}
+          <div className="pt-2">
+            <label className="block text-xs font-bold text-[#111827] mb-2">
+              3 Kartu Informasi di Bawah Banner:
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Card 1 */}
+              <div className="p-3 bg-[#F8F9FA] rounded-xl border border-gray-200 space-y-2">
+                <span className="text-[11px] font-bold text-blue-600 block">Kartu 1 (Waktu)</span>
+                <input
+                  type="text"
+                  value={form.extra_texts?.card1_title || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card1_title: e.target.value },
+                    })
+                  }
+                  placeholder="Judul: Waktu Presensi"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                />
+                <input
+                  type="text"
+                  value={form.extra_texts?.card1_desc || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card1_desc: e.target.value },
+                    })
+                  }
+                  placeholder="Subteks: 07.00 - 17.00 WIB"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px]"
+                />
+              </div>
+
+              {/* Card 2 */}
+              <div className="p-3 bg-[#F8F9FA] rounded-xl border border-gray-200 space-y-2">
+                <span className="text-[11px] font-bold text-emerald-600 block">Kartu 2 (Presisi)</span>
+                <input
+                  type="text"
+                  value={form.extra_texts?.card2_title || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card2_title: e.target.value },
+                    })
+                  }
+                  placeholder="Judul: Presisi NIM"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                />
+                <input
+                  type="text"
+                  value={form.extra_texts?.card2_desc || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card2_desc: e.target.value },
+                    })
+                  }
+                  placeholder="Subteks: Anti-typo & Auto-fill"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px]"
+                />
+              </div>
+
+              {/* Card 3 */}
+              <div className="p-3 bg-[#F8F9FA] rounded-xl border border-gray-200 space-y-2">
+                <span className="text-[11px] font-bold text-indigo-600 block">Kartu 3 (Integrasi)</span>
+                <input
+                  type="text"
+                  value={form.extra_texts?.card3_title || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card3_title: e.target.value },
+                    })
+                  }
+                  placeholder="Judul: Sinkronisasi"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                />
+                <input
+                  type="text"
+                  value={form.extra_texts?.card3_desc || ''}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      extra_texts: { ...form.extra_texts, card3_desc: e.target.value },
+                    })
+                  }
+                  placeholder="Subteks: Terkoneksi Sheets"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-[11px]"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Panduan Presensi Text */}
+          <div className="pt-2">
+            <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+              Judul Kotak Panduan
+            </label>
+            <input
+              type="text"
+              value={form.extra_texts?.instruction_title || ''}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  extra_texts: { ...form.extra_texts, instruction_title: e.target.value },
+                })
+              }
+              placeholder="Panduan Presensi Mahasiswa"
+              className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs font-semibold text-[#111827] outline-hidden mb-3"
+            />
+
+            <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+              Poin-Poin Panduan (1 baris = 1 poin bullet)
+            </label>
+            <textarea
+              value={instructionText}
+              onChange={(e) => setInstructionText(e.target.value)}
+              rows={4}
+              placeholder="Tuliskan setiap poin panduan di baris baru..."
+              className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs text-[#111827] outline-hidden"
+            />
+          </div>
+
+          {/* Footer Text */}
+          <div>
+            <label className="block text-xs font-semibold text-[#374151] mb-1.5">
+              Teks Footer Bawah
+            </label>
+            <input
+              type="text"
+              value={form.extra_texts?.footer_text || ''}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  extra_texts: { ...form.extra_texts, footer_text: e.target.value },
+                })
+              }
+              placeholder="Sistem Absensi Terintegrasi."
+              className="w-full bg-[#F8F9FA] focus:bg-white border border-gray-200 focus:border-[#2563EB] rounded-xl px-3.5 py-2 text-xs text-[#111827] outline-hidden"
+            />
+          </div>
+        </div>
+
+        {/* SUBMIT BUTTON */}
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center gap-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-6 py-2.5 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer"
+          >
+            {saving ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                <span>Menyimpan Seluruh Pengaturan...</span>
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                <span>Simpan Perubahan Teks</span>
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
