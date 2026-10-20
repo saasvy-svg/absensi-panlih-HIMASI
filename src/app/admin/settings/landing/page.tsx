@@ -13,7 +13,8 @@ import {
   Eye,
   FileText,
   UserCheck,
-  Plus
+  Plus,
+  ShieldCheck
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -43,6 +44,7 @@ export default function LandingSettingsPage() {
         'Jika berhalangan, pilih opsi Izin atau Sakit dan cantumkan alasan yang jelas.',
       ],
       lecturers: [] as string[],
+      anti_titip_enabled: true,
       card1_title: 'Waktu Presensi',
       card1_desc: '07.00 - 17.00 WIB',
       card2_title: 'Presisi NIM',
@@ -221,6 +223,33 @@ export default function LandingSettingsPage() {
       toast.info(`Dosen "${removed}" dihapus`);
     } catch (e) {
       toast.error('Gagal memperbarui data dosen');
+    }
+  };
+
+  const handleToggleAntiTitip = async () => {
+    const currentVal = form.extra_texts?.anti_titip_enabled ?? true;
+    const nextVal = !currentVal;
+    const updatedExtra = { ...form.extra_texts, anti_titip_enabled: nextVal };
+    const updatedForm = { ...form, extra_texts: updatedExtra };
+    setForm(updatedForm);
+
+    try {
+      const res = await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedForm),
+      });
+      if (res.ok) {
+        if (nextVal) {
+          toast.success('🛡️ Anti-Titip Absen DIAKTIFKAN: 1 HP hanya boleh absen 1 kali!');
+        } else {
+          toast.info('🔓 Anti-Titip Absen DINONAKTIFKAN: Mahasiswa bebas saling pinjam HP.');
+        }
+      } else {
+        toast.error('Gagal memperbarui saklar anti-titip absen');
+      }
+    } catch (e) {
+      toast.error('Terjadi kesalahan jaringan');
     }
   };
 
@@ -464,13 +493,68 @@ export default function LandingSettingsPage() {
           </div>
         </div>
 
-        {/* BAGIAN 3: KELOLA DAFTAR DOSEN */}
+        {/* BAGIAN 3: SAKLAR KEAMANAN ANTI-TITIP ABSEN */}
+        <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                  <ShieldCheck size={18} />
+                  3. Saklar Keamanan Anti-Titip Absen (Batas 1 HP / IP)
+                </h2>
+                <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                  Auto-Save
+                </span>
+              </div>
+              <p className="text-xs text-[#6B7280] max-w-xl">
+                Bila <b>AKTIF</b>, 1 HP/perangkat hanya bisa dipakai presensi 1 kali dalam sehari. Bila <b>DINONAKTIFKAN</b>, mahasiswa bebas meminjamkan HP atau menggunakan jaringan Wi-Fi/hotspot yang sama tanpa terblokir.
+              </p>
+            </div>
+
+            {/* Toggle Switch */}
+            <div className="flex items-center gap-3 shrink-0">
+              <span className={`text-xs font-bold ${form.extra_texts?.anti_titip_enabled !== false ? 'text-emerald-600' : 'text-gray-400'}`}>
+                {form.extra_texts?.anti_titip_enabled !== false ? 'FITUR AKTIF' : 'DINONAKTIFKAN'}
+              </span>
+              <button
+                type="button"
+                onClick={handleToggleAntiTitip}
+                className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                  form.extra_texts?.anti_titip_enabled !== false ? 'bg-emerald-500' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    form.extra_texts?.anti_titip_enabled !== false ? 'translate-x-7' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 transition-all ${
+            form.extra_texts?.anti_titip_enabled !== false
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}>
+            <div className={`w-2 h-2 rounded-full shrink-0 ${form.extra_texts?.anti_titip_enabled !== false ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span>
+              {form.extra_texts?.anti_titip_enabled !== false ? (
+                <><b>Status Saat Ini (Ketat):</b> Mahasiswa yang mencoba absen kedua kalinya dari HP/IP yang sama akan otomatis terblokir dengan peringatan anti-titip absen.</>
+              ) : (
+                <><b>Status Saat Ini (Bebas / Pinjam HP Diizinkan):</b> Batasan 1 HP dimatikan. Mahasiswa dapat saling meminjamkan HP atau tethering kuota ke temannya tanpa peringatan.</>
+              )}
+            </span>
+          </div>
+        </div>
+
+        {/* BAGIAN 4: KELOLA DAFTAR DOSEN */}
         <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
                 <UserCheck size={16} />
-                3. Kelola Daftar Dosen
+                4. Kelola Daftar Dosen
               </h2>
               <p className="text-xs text-[#6B7280] mt-1">
                 Daftar dosen ini akan muncul pada pilihan dropdown saat tab 'Presensi Dosen' dipilih di halaman depan.
@@ -544,11 +628,11 @@ export default function LandingSettingsPage() {
           </div>
         </div>
 
-        {/* BAGIAN 4: KUSTOMISASI SEMUA TEKS */}
+        {/* BAGIAN 5: KUSTOMISASI SEMUA TEKS */}
         <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
           <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
             <FileText size={16} />
-            4. Kustomisasi Seluruh Teks Halaman
+            5. Kustomisasi Seluruh Teks Halaman
           </h2>
 
           {/* Row 1: Nama & Badge */}

@@ -55,6 +55,53 @@ export default function AdminMonitoringPage() {
 
   const [classesList, setClassesList] = useState<string[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [antiTitipActive, setAntiTitipActive] = useState(true);
+  const [togglingAntiTitip, setTogglingAntiTitip] = useState(false);
+
+  const fetchAntiTitipStatus = async () => {
+    try {
+      const res = await fetch('/api/admin/settings/landing');
+      const data = await res.json();
+      if (res.ok && data.data?.extra_texts) {
+        setAntiTitipActive(data.data.extra_texts.anti_titip_enabled !== false);
+      }
+    } catch (e) {}
+  };
+
+  const handleToggleAntiTitipQuick = async () => {
+    setTogglingAntiTitip(true);
+    const nextVal = !antiTitipActive;
+    try {
+      const resGet = await fetch('/api/admin/settings/landing');
+      const dataGet = await resGet.json();
+      if (resGet.ok && dataGet.data) {
+        const updatedForm = {
+          ...dataGet.data,
+          extra_texts: {
+            ...dataGet.data.extra_texts,
+            anti_titip_enabled: nextVal,
+          },
+        };
+        const resPost = await fetch('/api/admin/settings/landing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedForm),
+        });
+        if (resPost.ok) {
+          setAntiTitipActive(nextVal);
+          if (nextVal) {
+            toast.success('🛡️ Anti-Titip Absen DIAKTIFKAN: 1 HP hanya boleh absen 1 kali!');
+          } else {
+            toast.info('🔓 Anti-Titip Absen DINONAKTIFKAN: Mahasiswa bebas pinjam HP!');
+          }
+        }
+      }
+    } catch (e) {
+      toast.error('Gagal memperbarui status saklar anti-titip');
+    } finally {
+      setTogglingAntiTitip(false);
+    }
+  };
 
   // Subtle audio notification chime using Web Audio API
   const playNotificationSound = () => {
@@ -78,6 +125,7 @@ export default function AdminMonitoringPage() {
 
   useEffect(() => {
     fetchMonitoringData();
+    fetchAntiTitipStatus();
 
     // 1. Supabase Realtime Listener (Otomatis update detik itu juga saat ada yang absen)
     const supabase = createClient();
@@ -294,6 +342,21 @@ export default function AdminMonitoringPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+          {/* Quick Saklar Anti-Titip Absen */}
+          <button
+            onClick={handleToggleAntiTitipQuick}
+            disabled={togglingAntiTitip}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer whitespace-nowrap shadow-2xs ${
+              antiTitipActive
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'
+            }`}
+            title="Klik untuk menyalakan/mematikan batasan 1 HP 1 kali absen"
+          >
+            <ShieldCheck size={14} className={antiTitipActive ? 'text-emerald-600' : 'text-amber-600'} />
+            <span>Anti-Titip: {antiTitipActive ? 'ON' : 'OFF'}</span>
+          </button>
+
           {/* Tombol Absenkan Manual */}
           <button
             onClick={() => {
