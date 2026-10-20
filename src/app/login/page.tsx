@@ -3,8 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ShieldCheck, Lock, Mail, Loader2, ArrowLeft } from 'lucide-react';
-import Link from 'next/link';
+import { ShieldCheck, Lock, Mail, Loader2 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
 export default function LoginPage() {
@@ -39,21 +38,13 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] flex flex-col justify-center items-center px-4 py-12">
-      <Link
-        href="/"
-        className="mb-8 inline-flex items-center gap-2 text-xs font-semibold text-[#4B5563] hover:text-[#2563EB] bg-white border border-black/5 px-3 py-1.5 rounded-xl shadow-2xs transition-all"
-      >
-        <ArrowLeft size={14} />
-        <span>Kembali ke Halaman Mahasiswa</span>
-      </Link>
-
       <div className="w-full max-w-md bg-white rounded-2xl border border-black/5 shadow-sm p-8">
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-blue-50 text-[#2563EB] rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-2xs">
             <ShieldCheck size={28} />
           </div>
           <h2 className="text-2xl font-bold text-[#111827]">
-            Admin Portal
+            Admin Portal HIMASI
           </h2>
           <p className="text-xs text-[#6B7280] mt-1">
             Masuk untuk memantau absensi & mengelola sistem
@@ -102,7 +93,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 mt-2"
+            className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer"
           >
             {loading ? (
               <>

@@ -188,10 +188,10 @@ export default function AdminMonitoringPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Top Header & Action Buttons */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-2 border-b border-black/5">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <h1 className="text-2xl font-bold text-[#111827] tracking-tight flex items-center gap-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-[#111827] tracking-tight flex items-center gap-2">
               <LayoutDashboard className="text-[#2563EB]" size={26} />
               Monitoring Kehadiran Mahasiswa
             </h1>
@@ -205,7 +205,7 @@ export default function AdminMonitoringPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
           {/* Tombol Absenkan Manual */}
           <button
             onClick={() => {
@@ -214,7 +214,7 @@ export default function AdminMonitoringPage() {
               setManualNotes('Diabsenkan oleh Admin (Kendala HP/Perangkat)');
               setShowManualModal(true);
             }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer whitespace-nowrap"
             title="Absenkan mahasiswa secara manual jika mengalami kendala perangkat"
           >
             <UserCheck size={14} />
@@ -227,7 +227,7 @@ export default function AdminMonitoringPage() {
               fetchMonitoringData();
             }}
             disabled={refreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white text-[#4B5563] hover:text-[#111827] border border-gray-200 rounded-xl text-xs font-semibold shadow-2xs hover:bg-gray-50 transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white text-[#4B5563] hover:text-[#111827] border border-gray-200 rounded-xl text-xs font-semibold shadow-2xs hover:bg-gray-50 transition-all cursor-pointer whitespace-nowrap"
             title="Refresh Data Sekarang"
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
@@ -237,7 +237,7 @@ export default function AdminMonitoringPage() {
           <button
             onClick={handleManualSyncToSheets}
             disabled={syncingSheets}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer whitespace-nowrap"
             title="Siapkan dan sinkronkan roster lengkap mahasiswa ke Google Sheets"
           >
             <FileSpreadsheet size={15} />
@@ -248,16 +248,20 @@ export default function AdminMonitoringPage() {
 
       {/* STATS METRIC CARDS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Mahasiswa */}
+        {/* Total Target Presensi */}
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-black/5 shadow-2xs">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-[#6B7280]">Total Mahasiswa</span>
+            <span className="text-xs font-semibold text-[#6B7280]">Total Target Presensi</span>
             <div className="w-8 h-8 rounded-xl bg-blue-50 text-[#2563EB] flex items-center justify-center">
               <Users size={16} />
             </div>
           </div>
-          <div className="text-2xl font-bold text-[#111827]">{metrics.totalStudents}</div>
-          <p className="text-[11px] text-gray-400 mt-0.5">Terdaftar di master data</p>
+          <div className="text-2xl font-bold text-[#111827]">
+            {metrics.allCombined.length || metrics.totalStudents}
+          </div>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            {metrics.totalStudents} Mahasiswa • {metrics.allCombined.length > metrics.totalStudents ? metrics.allCombined.length - metrics.totalStudents : 4} Dosen
+          </p>
         </div>
 
         {/* Total Hadir */}
@@ -413,18 +417,18 @@ export default function AdminMonitoringPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="w-full text-left border-collapse text-xs min-w-[960px]">
               <thead>
                 <tr className="bg-[#F8F9FA] border-b border-black/5 text-[#6B7280] font-bold uppercase tracking-wider">
-                  <th className="py-3 px-4">No</th>
-                  <th className="py-3 px-4">NIM</th>
-                  <th className="py-3 px-4">Nama Mahasiswa</th>
-                  <th className="py-3 px-4">Angkatan</th>
-                  <th className="py-3 px-4">Dosen</th>
-                  <th className="py-3 px-4">Waktu Presensi</th>
-                  <th className="py-3 px-4">Status Kehadiran</th>
-                  <th className="py-3 px-4">Keterangan</th>
-                  <th className="py-3 px-4 text-center">Aksi Admin</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">No</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">NIM</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Nama Mahasiswa</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Angkatan</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Dosen</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Waktu Presensi</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Status Kehadiran</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap">Keterangan</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap text-center">Aksi Admin</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/5">
@@ -438,24 +442,24 @@ export default function AdminMonitoringPage() {
                         !isPresent ? 'bg-amber-50/20' : ''
                       }`}
                     >
-                      <td className="py-3 px-4 text-gray-400 font-mono">{idx + 1}</td>
-                      <td className="py-3 px-4 font-mono font-bold text-[#111827]">{item.nim}</td>
-                      <td className="py-3 px-4 font-semibold text-[#111827]">{item.name}</td>
-                      <td className="py-3 px-4">
-                        <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">
+                      <td className="py-3.5 px-4 text-gray-400 font-mono whitespace-nowrap">{idx + 1}</td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-[#111827] whitespace-nowrap">{item.nim}</td>
+                      <td className="py-3.5 px-4 font-semibold text-[#111827] whitespace-nowrap min-w-[180px]">{item.name}</td>
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200 whitespace-nowrap">
                           {item.class_name}
                         </span>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         {item.lecturer_name ? (
-                          <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold text-[11px] border border-indigo-200">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold text-[11px] border border-indigo-200 whitespace-nowrap">
                             {item.lecturer_name}
                           </span>
                         ) : (
                           <span className="text-gray-400 italic">-</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-mono text-gray-600">
+                      <td className="py-3.5 px-4 font-mono text-gray-600 whitespace-nowrap">
                         {item.check_in_time ? (
                           <span className="font-semibold text-[#111827]">
                             {item.check_in_time.slice(0, 5)} WIB
@@ -464,34 +468,34 @@ export default function AdminMonitoringPage() {
                           <span className="text-gray-400 italic">-</span>
                         )}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4 whitespace-nowrap">
                         {item.status === 'Hadir' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[11px] whitespace-nowrap">
                             <CheckCircle2 size={12} />
                             Hadir
                           </span>
                         )}
                         {item.status === 'Izin' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold text-[11px] whitespace-nowrap">
                             Izin
                           </span>
                         )}
                         {item.status === 'Sakit' && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold text-[11px] whitespace-nowrap">
                             Sakit
                           </span>
                         )}
                         {(!item.status || item.status === 'Belum Hadir') && (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[11px] whitespace-nowrap">
                             <Clock size={12} />
                             Belum Hadir
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-gray-500 max-w-xs truncate">
+                      <td className="py-3.5 px-4 text-gray-500 max-w-xs truncate">
                         {item.notes || '-'}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         {!isPresent ? (
                           <button
                             onClick={() => {
@@ -500,14 +504,14 @@ export default function AdminMonitoringPage() {
                               setManualNotes('Diabsenkan oleh Admin (Kendala HP/Perangkat)');
                               setShowManualModal(true);
                             }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2563EB] hover:text-[#1D4ED8] text-[11px] font-bold border border-blue-200 transition-all cursor-pointer shadow-2xs"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-[#2563EB] hover:text-[#1D4ED8] text-[11px] font-bold border border-blue-200 transition-all cursor-pointer shadow-2xs whitespace-nowrap"
                             title="Bantu absenkan mahasiswa ini jika mengalami kendala perangkat"
                           >
                             <UserCheck size={12} />
                             <span>Absenkan</span>
                           </button>
                         ) : (
-                          <span className="text-[11px] text-emerald-600 font-semibold inline-flex items-center gap-1">
+                          <span className="text-[11px] text-emerald-600 font-semibold inline-flex items-center gap-1 whitespace-nowrap">
                             <CheckCircle2 size={12} />
                             Tercatat
                           </span>

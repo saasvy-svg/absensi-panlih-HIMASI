@@ -14,7 +14,8 @@ import {
   Menu, 
   X,
   GraduationCap,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
@@ -49,6 +50,26 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
   // Dynamic branding state
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [institutionName, setInstitutionName] = useState('Admin Panel');
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          window.location.href = '/login';
+          return;
+        }
+      } catch (err) {
+        window.location.href = '/login';
+        return;
+      }
+      setAuthChecking(false);
+    };
+
+    checkAuth();
+  }, []);
 
   const fetchBranding = async () => {
     try {
@@ -77,6 +98,15 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
     } catch (e) {}
     window.location.href = '/login';
   };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 text-[#2563EB] animate-spin" />
+        <p className="text-xs text-gray-500 font-medium">Memverifikasi sesi admin...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] flex">
