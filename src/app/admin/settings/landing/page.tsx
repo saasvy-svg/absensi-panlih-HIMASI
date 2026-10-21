@@ -23,6 +23,7 @@ import {
 import Link from 'next/link';
 import { getWIBDate } from '@/lib/utils';
 import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
+import { createClient } from '@/utils/supabase/client';
 
 export default function LandingSettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -120,127 +121,69 @@ export default function LandingSettingsPage() {
     }
   };
 
-  /**
-   * Mengompresi gambar otomatis di sisi browser menggunakan HTML5 Canvas
-   * Mengubah foto kamera berukuran besar (misal 5MB - 20MB) menjadi WebP tajam (~200KB - 400KB)
-   */
-  const compressImageClientSide = async (
-    file: File,
-    maxWidth = 1920,
-    quality = 0.82
-  ): Promise<File> => {
-    // Lewatkan SVG atau GIF agar animasi/vektor tidak rusak
-    if (file.type === 'image/svg+xml' || file.type === 'image/gif') {
-      return file;
-    }
-
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          let width = img.width;
-          let height = img.height;
-
-          // Kecilkan resolusi secara proporsional jika lebih besar dari maxWidth
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(file);
-            return;
-          }
-
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Ekspor ke format WebP yang sangat ringan dan tajam
-          canvas.toBlob(
-            (blob) => {
-              if (!blob) {
-                resolve(file);
-                return;
-              }
-              const newFileName = file.name.replace(/\.[^/.]+$/, '') + '.webp';
-              const compressedFile = new File([blob], newFileName, {
-                type: 'image/webp',
-                lastModified: Date.now(),
-              });
-              resolve(compressedFile);
-            },
-            'image/webp',
-            quality
-          );
-        };
-        img.onerror = () => resolve(file);
-      };
-      reader.onerror = () => resolve(file);
-    });
-  };
-
   const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>, type: 'logo' | 'banner') => {
-    const originalFile = e.target.files?.[0];
-    if (!originalFile) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Batas file 25 MB (langsung ke Supabase Storage, tanpa kompresi)
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error('Ukuran file maksimal 25 MB.');
+      return;
+    }
 
     const isLogo = type === 'logo';
     if (isLogo) setUploadingLogo(true);
     else setUploadingBanner(true);
 
     try {
-      // 1. Kompresi otomatis di browser jika foto besar (misal 10MB - 20MB)
-      let fileToUpload = originalFile;
-      const initialSizeMb = (originalFile.size / (1024 * 1024)).toFixed(1);
-
-      if (originalFile.size > 800 * 1024) {
-        toast.info(`Mengompresi ${isLogo ? 'logo' : 'foto banner'} (${initialSizeMb} MB) agar loading halaman super cepat...`, {
-          duration: 3000,
-        });
-        fileToUpload = await compressImageClientSide(
-          originalFile,
-          isLogo ? 800 : 1920,
-          isLogo ? 0.9 : 0.82
-        );
-      }
-
-      // Pastikan setelah dikompresi tidak melebihi 4.5 MB (batas Vercel serverless)
-      if (fileToUpload.size > 4.5 * 1024 * 1024) {
-        toast.error(`Ukuran file (${(fileToUpload.size / (1024 * 1024)).toFixed(1)} MB) masih terlalu besar. Harap gunakan foto dengan resolusi lebih kecil.`);
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('file', fileToUpload);
-      formData.append('folder', isLogo ? 'logos' : 'banners');
-
-      const res = await fetch('/api/admin/upload', {
-        method: 'POST',
-        body: formData,
+      const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
+      toast.info(`Mengunggah ${isLogo ? 'logo' : 'foto banner'} (${fileSizeMb} MB) kualitas asli tanpa kompresi langsung ke storage...`, {
+        duration: 3500,
       });
 
-      const data = await res.json();
+      // 1. Minta Signed Upload URL ke server (bypasses Vercel payload limit)
+      const resToken = await fetch('/api/admin/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileType: file.type,
+          folder: isLogo ? 'logos' : 'banners',
+        }),
+      });
 
-      if (res.ok && data.url) {
-        if (isLogo) {
-          setForm((prev) => ({ ...prev, logo_url: data.url }));
-          await autoSaveMedia(data.url, undefined);
-          toast.success('Logo berhasil di-upload dan LANGSUNG AKTIF di halaman depan! 🎉');
-        } else {
-          const nextImages = [...form.hero_images, data.url];
-          setForm((prev) => ({ ...prev, hero_images: nextImages }));
-          await autoSaveMedia(undefined, nextImages);
-          toast.success('Banner berhasil di-upload dan LANGSUNG AKTIF di halaman depan! 🎉');
-        }
+      const tokenData = await resToken.json();
+      if (!resToken.ok || !tokenData.token || !tokenData.cleanPath) {
+        throw new Error(tokenData.error || 'Gagal menyiapkan URL upload ke server');
+      }
+
+      // 2. Upload LANGSUNG dari browser ke Supabase Storage (Kualitas Asli 100% Utuh!)
+      const supabase = createClient();
+      const { error: uploadError } = await supabase.storage
+        .from('landing-assets')
+        .uploadToSignedUrl(tokenData.cleanPath, tokenData.token, file, {
+          contentType: file.type,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message || 'Gagal upload langsung ke Supabase');
+      }
+
+      const uploadedUrl = tokenData.publicUrl;
+
+      // 3. Simpan URL ke form & database
+      if (isLogo) {
+        setForm((prev) => ({ ...prev, logo_url: uploadedUrl }));
+        await autoSaveMedia(uploadedUrl, undefined);
+        toast.success('Logo berhasil di-upload dalam kualitas asli! 🎉');
       } else {
-        toast.error(data.error || 'Gagal mengunggah file.');
+        const nextImages = [...form.hero_images, uploadedUrl];
+        setForm((prev) => ({ ...prev, hero_images: nextImages }));
+        await autoSaveMedia(undefined, nextImages);
+        toast.success('Foto banner berhasil di-upload dalam kualitas asli (tanpa kompresi)! 🎉');
       }
     } catch (err: any) {
+      console.error('Upload Error:', err);
       toast.error(err.message || 'Terjadi kesalahan saat upload ke server.');
     } finally {
       if (isLogo) setUploadingLogo(false);
