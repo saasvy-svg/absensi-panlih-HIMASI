@@ -8,6 +8,8 @@ import {
   Users, 
   Image as ImageIcon, 
   FileSpreadsheet, 
+  Vote,
+  BarChart3,
   LogOut, 
   ChevronLeft, 
   ChevronRight, 
@@ -24,6 +26,16 @@ const NAV_ITEMS = [
     name: 'Monitoring Absensi',
     href: '/admin',
     icon: LayoutDashboard,
+  },
+  {
+    name: 'Bilik Suara (Antrean)',
+    href: '/admin/bilik-suara',
+    icon: Vote,
+  },
+  {
+    name: 'Quick Count Pemira',
+    href: '/admin/quick-count',
+    icon: BarChart3,
   },
   {
     name: 'Data Mahasiswa',

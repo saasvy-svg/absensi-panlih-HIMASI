@@ -971,13 +971,29 @@ export async function syncCategorizedWithMasterRoster(
     groups['Dosen'] = dosenList;
   }
 
+  // 2.5 Tab Khusus Pemira: Rekap Gabungan (Seluruh Mahasiswa & Dosen)
+  const combinedList: any[] = [];
+  Object.values(groups).forEach((list) => {
+    combinedList.push(...list);
+  });
+  if (combinedList.length > 0) {
+    groups['Rekap Gabungan'] = [...combinedList];
+  }
+
   // 3. Clear and rewrite each tab
   const headers = buildModelBHeaders(normalizedDays);
   const endColLetter = getColumnLetter(headers.length);
 
   const results = await Promise.all(
     Object.entries(groups).map(async ([tabName, items]) => {
-      items.sort((a, b) => String(a.nim).localeCompare(String(b.nim)));
+      if (tabName === 'Rekap Gabungan') {
+        items.sort((a, b) =>
+          String(a.class_name).localeCompare(String(b.class_name)) ||
+          String(a.nim).localeCompare(String(b.nim))
+        );
+      } else {
+        items.sort((a, b) => String(a.nim).localeCompare(String(b.nim)));
+      }
 
       const { sheetNumericId } = await ensureSheetTab(sheetId, tabName, normalizedDays);
 

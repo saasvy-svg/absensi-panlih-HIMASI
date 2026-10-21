@@ -18,11 +18,13 @@ import {
   CalendarDays,
   Calendar,
   Layers,
-  Sparkles
+  Sparkles,
+  Clock
 } from 'lucide-react';
 import Link from 'next/link';
 import { getWIBDate } from '@/lib/utils';
 import { getNextWIBDate, resolveActiveDay, getDaysList } from '@/lib/dayHelper';
+import { checkAttendanceTimeLock } from '@/lib/timeLock';
 import { DayConfigItem } from '@/types/database';
 import { createClient } from '@/utils/supabase/client';
 
@@ -289,6 +291,56 @@ export default function LandingSettingsPage() {
       }
     } catch (e) {
       toast.error('Terjadi kesalahan jaringan');
+    }
+  };
+
+  const handleToggleTimeLock = async () => {
+    const currentVal = form.extra_texts?.time_lock_enabled === true;
+    const nextVal = !currentVal;
+    const updatedExtra = { ...form.extra_texts, time_lock_enabled: nextVal };
+    const updatedForm = { ...form, extra_texts: updatedExtra };
+    setForm(updatedForm);
+
+    try {
+      const res = await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedForm),
+      });
+      if (res.ok) {
+        if (nextVal) {
+          toast.success('⏰ Pembatasan Jam Presensi DIAKTIFKAN!');
+        } else {
+          toast.info('🔓 Pembatasan Jam Presensi DINONAKTIFKAN (Dibuka 24 jam).');
+        }
+        window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+      } else {
+        toast.error('Gagal memperbarui saklar jam presensi');
+      }
+    } catch (e) {
+      toast.error('Terjadi kesalahan jaringan');
+    }
+  };
+
+  const handleUpdateTimeLockTimes = async (openVal?: string, closeVal?: string) => {
+    const updatedExtra = {
+      ...form.extra_texts,
+      open_time: openVal !== undefined ? openVal : form.extra_texts?.open_time || '07:00',
+      close_time: closeVal !== undefined ? closeVal : form.extra_texts?.close_time || '15:00',
+    };
+    const updatedForm = { ...form, extra_texts: updatedExtra };
+    setForm(updatedForm);
+
+    try {
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedForm),
+      });
+      toast.success('Jam Buka & Tutup Presensi berhasil diperbarui! ⏰');
+      window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+    } catch (e) {
+      toast.error('Gagal menyimpan jam presensi');
     }
   };
 
@@ -733,6 +785,122 @@ export default function LandingSettingsPage() {
             </span>
           </div>
         </div>
+
+        {/* BAGIAN 3.5: PEMBATASAN JAM BUKA & TUTUP PRESENSI */}
+        {(() => {
+          const timeLockStatus = checkAttendanceTimeLock(form.extra_texts);
+          const isEnabled = form.extra_texts?.time_lock_enabled === true;
+          const openVal = form.extra_texts?.open_time || '07:00';
+          const closeVal = form.extra_texts?.close_time || '15:00';
+
+          return (
+            <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                      <Clock size={16} />
+                      3.5. Pengaturan Jam Buka & Tutup Presensi
+                    </h2>
+                    <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      Auto-Save Aktif
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6B7280]">
+                    Kunci formulir presensi mahasiswa secara otomatis di luar jam yang ditentukan.
+                  </p>
+                </div>
+
+                {/* Toggle Switch */}
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`text-xs font-bold ${isEnabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    {isEnabled ? 'BATAS JAM AKTIF' : 'DIBUKA 24 JAM'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleToggleTimeLock}
+                    className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                      isEnabled ? 'bg-emerald-500' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        isEnabled ? 'translate-x-7' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Input Jam Buka & Tutup */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                <div className={`p-3.5 rounded-xl border transition-all space-y-1.5 ${
+                  isEnabled ? 'bg-blue-50/50 border-blue-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                }`}>
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <span>⏰ Jam Buka Presensi:</span>
+                  </label>
+                  <input
+                    type="time"
+                    disabled={!isEnabled}
+                    value={openVal}
+                    onChange={(e) => handleUpdateTimeLockTimes(e.target.value, undefined)}
+                    className="w-full bg-white px-3 py-2 text-xs font-bold rounded-lg border border-gray-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                  />
+                  <p className="text-[10px] text-gray-400">
+                    Mahasiswa baru bisa mengisi formulir mulai jam ini (WIB).
+                  </p>
+                </div>
+
+                <div className={`p-3.5 rounded-xl border transition-all space-y-1.5 ${
+                  isEnabled ? 'bg-rose-50/50 border-rose-200' : 'bg-gray-50 border-gray-200 opacity-60'
+                }`}>
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <span>🛑 Jam Tutup Presensi:</span>
+                  </label>
+                  <input
+                    type="time"
+                    disabled={!isEnabled}
+                    value={closeVal}
+                    onChange={(e) => handleUpdateTimeLockTimes(undefined, e.target.value)}
+                    className="w-full bg-white px-3 py-2 text-xs font-bold rounded-lg border border-gray-300 focus:outline-hidden focus:ring-2 focus:ring-rose-500 cursor-pointer disabled:cursor-not-allowed"
+                  />
+                  <p className="text-[10px] text-gray-400">
+                    Setelah jam ini, formulir otomatis terkunci dan menolak pengisian.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Indicator */}
+              <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 transition-all ${
+                !isEnabled
+                  ? 'bg-blue-50 border-blue-200 text-blue-800'
+                  : timeLockStatus.isOpen
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}>
+                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  !isEnabled
+                    ? 'bg-blue-500'
+                    : timeLockStatus.isOpen
+                    ? 'bg-emerald-500 animate-pulse'
+                    : 'bg-rose-500'
+                }`} />
+                <span>
+                  <b>Waktu Server Saat Ini:</b> {timeLockStatus.currentTime} WIB •{' '}
+                  <b>Status Formulir:</b>{' '}
+                  {!isEnabled ? (
+                    'Terbuka Bebas (Tanpa Batasan Jam)'
+                  ) : timeLockStatus.isOpen ? (
+                    <span className="text-emerald-700 font-bold">SEDANG DIBUKA ({openVal} - {closeVal} WIB)</span>
+                  ) : (
+                    <span className="text-rose-700 font-bold">TERKUNCI / DITUTUP ({timeLockStatus.reason === 'TOO_EARLY' ? `Buka pk ${openVal}` : `Tutup sejak pk ${closeVal}`})</span>
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* BAGIAN 4: SESI PRESENSI MULTI-HARI (MODEL B MATRIKS) */}
         {(() => {
