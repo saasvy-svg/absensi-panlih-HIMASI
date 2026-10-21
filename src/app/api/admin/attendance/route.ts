@@ -48,7 +48,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: deleteError.message }, { status: 500 });
     }
 
-    // 2. Tentukan apakah presensi ini berada di Hari 1 atau Hari 2
+    // 2. Tentukan sesi hari presensi (Hari 1, Hari 2, dst)
     let extraTexts: any = null;
     try {
       const { data: landingData } = await supabase
@@ -59,13 +59,12 @@ export async function DELETE(request: NextRequest) {
     } catch (e) {}
 
     const dayResolution = resolveActiveDay(extraTexts, targetAttendance.attendance_date);
-    const day =
-      targetAttendance.attendance_date === dayResolution.day2Date ||
-      (targetAttendance.attendance_date && targetAttendance.attendance_date > dayResolution.day1Date)
-        ? 2
-        : 1;
+    const matchedDay = dayResolution.days.find(
+      (d) => d.date === targetAttendance.attendance_date
+    );
+    const day = matchedDay ? matchedDay.dayNumber : (dayResolution.activeDay || 1);
 
-    // 3. Reset status pada baris mahasiswa di Google Sheets kembali ke "Belum Hadir" & jam "-"
+    // 3. Reset status pada baris mahasiswa di Google Sheets kembali ke "-"
     try {
       const { data: config } = await supabase
         .from('sheet_configs')
@@ -82,7 +81,8 @@ export async function DELETE(request: NextRequest) {
             class_name: targetAttendance.class_name,
             attendance_date: targetAttendance.attendance_date,
           },
-          day
+          day,
+          dayResolution.days
         );
       }
     } catch (sheetErr: any) {

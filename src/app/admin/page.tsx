@@ -26,7 +26,8 @@ import {
   Trash2
 } from 'lucide-react';
 import { formatDate, getWIBDate } from '@/lib/utils';
-import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
+import { getNextWIBDate, resolveActiveDay, getDaysList } from '@/lib/dayHelper';
+import { DayConfigItem } from '@/types/database';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/client';
 
@@ -75,15 +76,17 @@ export default function AdminMonitoringPage() {
   const [togglingAntiTitip, setTogglingAntiTitip] = useState(false);
 
   const [dayConfig, setDayConfig] = useState<{
-    activeDaySetting: 1 | 2 | 'auto';
+    activeDaySetting: number | 'auto';
     day1Date: string;
     day2Date: string;
-    resolvedActiveDay: 1 | 2;
+    resolvedActiveDay: number;
+    days: DayConfigItem[];
   }>({
     activeDaySetting: 'auto',
     day1Date: getWIBDate(),
     day2Date: getNextWIBDate(getWIBDate()),
     resolvedActiveDay: 1,
+    days: getDaysList(),
   });
   const [switchingDay, setSwitchingDay] = useState(false);
 
@@ -100,22 +103,41 @@ export default function AdminMonitoringPage() {
           day1Date: resolved.day1Date,
           day2Date: resolved.day2Date,
           resolvedActiveDay: resolved.activeDay,
+          days: resolved.days,
         });
       }
     } catch (e) {}
   };
 
-  const handleQuickSwitchDay = async (mode: 1 | 2 | 'auto') => {
+  const handleQuickSwitchDay = async (mode?: number | 'auto') => {
     setSwitchingDay(true);
     try {
       const resGet = await fetch('/api/admin/settings/landing');
       const dataGet = await resGet.json();
       if (resGet.ok && dataGet.data) {
+        const ext = dataGet.data.extra_texts;
+        const currentDays = getDaysList(ext);
+
+        let targetMode = mode;
+        if (targetMode === undefined) {
+          if (dayConfig.activeDaySetting === 'auto') {
+            targetMode = 1;
+          } else if (typeof dayConfig.activeDaySetting === 'number') {
+            if (dayConfig.activeDaySetting < currentDays.length) {
+              targetMode = dayConfig.activeDaySetting + 1;
+            } else {
+              targetMode = 'auto';
+            }
+          } else {
+            targetMode = 'auto';
+          }
+        }
+
         const updatedForm = {
           ...dataGet.data,
           extra_texts: {
-            ...dataGet.data.extra_texts,
-            active_day: mode,
+            ...ext,
+            active_day: targetMode,
           },
         };
         const resPost = await fetch('/api/admin/settings/landing', {
@@ -126,12 +148,13 @@ export default function AdminMonitoringPage() {
         if (resPost.ok) {
           const resolved = resolveActiveDay(updatedForm.extra_texts);
           setDayConfig({
-            activeDaySetting: mode,
+            activeDaySetting: targetMode,
             day1Date: resolved.day1Date,
             day2Date: resolved.day2Date,
             resolvedActiveDay: resolved.activeDay,
+            days: resolved.days,
           });
-          const label = mode === 'auto' ? 'Otomatis' : `Hari ke-${mode}`;
+          const label = targetMode === 'auto' ? 'Otomatis' : `Hari ke-${targetMode}`;
           toast.success(`📅 Sesi Presensi Aktif diubah ke: ${label}`);
         }
       }
@@ -327,8 +350,8 @@ export default function AdminMonitoringPage() {
         ? `DOSEN-${selectedStudentForManual.name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 15)}`
         : '');
 
-    const isViewingDay2 = date === dayConfig.day2Date || date > dayConfig.day1Date;
-    const targetDay = isViewingDay2 ? 2 : (date === dayConfig.day1Date ? 1 : dayConfig.resolvedActiveDay);
+    const matchedDay = dayConfig.days.find((d) => d.date === date);
+    const targetDay = matchedDay ? matchedDay.dayNumber : dayConfig.resolvedActiveDay;
 
     setSavingManual(true);
     try {
@@ -472,26 +495,18 @@ export default function AdminMonitoringPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
-          {/* Quick Saklar Sesi Aktif Presensi (Hari 1 / Hari 2 / Auto) */}
+          {/* Quick Saklar Sesi Aktif Presensi (Hari 1 / Hari 2 / Hari 3 / ... / Auto) */}
           <button
-            onClick={() => {
-              const nextMode =
-                dayConfig.activeDaySetting === 'auto'
-                  ? 1
-                  : dayConfig.activeDaySetting === 1
-                  ? 2
-                  : 'auto';
-              handleQuickSwitchDay(nextMode);
-            }}
+            onClick={() => handleQuickSwitchDay()}
             disabled={switchingDay}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer whitespace-nowrap shadow-2xs ${
-              dayConfig.resolvedActiveDay === 2
+              dayConfig.resolvedActiveDay > 1
                 ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
                 : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-300'
             }`}
-            title={`Klik untuk ganti sesi presensi peserta (Saat ini: Hari ${dayConfig.resolvedActiveDay} - Mode ${dayConfig.activeDaySetting})`}
+            title={`Klik untuk rotasi sesi presensi peserta (Saat ini: Hari ${dayConfig.resolvedActiveDay} - Mode ${dayConfig.activeDaySetting})`}
           >
-            <CalendarDays size={14} className={dayConfig.resolvedActiveDay === 2 ? 'text-emerald-600' : 'text-blue-600'} />
+            <CalendarDays size={14} className={dayConfig.resolvedActiveDay > 1 ? 'text-emerald-600' : 'text-blue-600'} />
             <span>Sesi: Hari {dayConfig.resolvedActiveDay} ({dayConfig.activeDaySetting === 'auto' ? 'Auto' : 'Manual'})</span>
           </button>
 
@@ -627,36 +642,30 @@ export default function AdminMonitoringPage() {
           </div>
 
           {/* Quick Day Switch Pills */}
-          <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-black/5">
-            <button
-              type="button"
-              onClick={() => setDate(dayConfig.day1Date)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                date === dayConfig.day1Date
-                  ? 'bg-blue-600 text-white shadow-2xs'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-              }`}
-              title={`Tampilkan data presensi Hari 1 (${dayConfig.day1Date})`}
-            >
-              Hari 1
-            </button>
-            <button
-              type="button"
-              onClick={() => setDate(dayConfig.day2Date)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                date === dayConfig.day2Date
-                  ? 'bg-emerald-600 text-white shadow-2xs'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
-              }`}
-              title={`Tampilkan data presensi Hari 2 (${dayConfig.day2Date})`}
-            >
-              Hari 2
-            </button>
+          <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-black/5 flex-wrap">
+            {dayConfig.days.map((d) => {
+              const isActive = date === d.date;
+              return (
+                <button
+                  key={d.dayNumber}
+                  type="button"
+                  onClick={() => setDate(d.date)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+                  }`}
+                  title={`Tampilkan data presensi ${d.label || `Hari ${d.dayNumber}`} (${d.date})`}
+                >
+                  {d.label || `Hari ${d.dayNumber}`}
+                </button>
+              );
+            })}
             <button
               type="button"
               onClick={() => setDate(getWIBDate())}
               className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                date === getWIBDate() && date !== dayConfig.day1Date && date !== dayConfig.day2Date
+                date === getWIBDate() && !dayConfig.days.some((d) => d.date === getWIBDate())
                   ? 'bg-gray-800 text-white shadow-2xs'
                   : 'text-gray-500 hover:text-gray-800 hover:bg-gray-200/60'
               }`}
@@ -907,12 +916,11 @@ export default function AdminMonitoringPage() {
               {/* Info Sesi & Tanggal Presensi Manual */}
               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                 <span className="text-gray-500 font-medium">Target Presensi:</span>
-                <span className={`font-bold px-2 py-0.5 rounded-md ${
-                  (date === dayConfig.day2Date || date > dayConfig.day1Date)
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-blue-100 text-blue-800'
-                }`}>
-                  Hari ke-{(date === dayConfig.day2Date || date > dayConfig.day1Date) ? 2 : 1} ({date})
+                <span className="font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800">
+                  Hari ke-{(() => {
+                    const matched = dayConfig.days.find((d) => d.date === date);
+                    return matched ? matched.dayNumber : dayConfig.resolvedActiveDay;
+                  })()} ({date})
                 </span>
               </div>
               {/* Jika dibuka dari tombol atas (belum pilih partisipan) */}

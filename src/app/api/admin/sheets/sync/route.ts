@@ -33,8 +33,7 @@ export async function POST(request: NextRequest) {
 
     const extraTexts = landingData?.extra_texts;
     const dayResolution = resolveActiveDay(extraTexts, date);
-    const day1Date = dayResolution.day1Date;
-    const day2Date = dayResolution.day2Date;
+    const days = dayResolution.days;
     const lecturers: string[] = extraTexts?.lecturers || [];
 
     // 3. Ambil seluruh data master mahasiswa aktif
@@ -48,15 +47,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: studentError.message }, { status: 500 });
     }
 
-    // 4. Ambil data absensi (ambil absensi Hari 1 dan Hari 2 jika ada)
+    // 4. Ambil data absensi untuk seluruh hari yang dikonfigurasi
+    const configuredDates = Array.from(new Set([
+      ...days.map((d) => d.date),
+      dayResolution.day1Date,
+      dayResolution.day2Date,
+      ...(date !== 'all' ? [date] : [])
+    ])).filter(Boolean);
+
     let query = supabase
       .from('attendances')
       .select('*')
       .order('check_in_time', { ascending: true });
 
-    if (date !== 'all') {
-      // Ambil data untuk tanggal hari 1 & hari 2 agar sinkronisasi 2 tabel lengkap
-      query = query.in('attendance_date', [day1Date, day2Date, date]);
+    if (date !== 'all' && configuredDates.length > 0) {
+      query = query.in('attendance_date', configuredDates);
     }
 
     const { data: attendances, error: attError } = await query;
@@ -77,8 +82,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 5. Sinkronkan Roster Master Lengkap ke Tab masing-masing (Angkatan 2025, Angkatan 2026, Dosen)
-    // Mendukung Hari 1 (Kolom B:J) dan Hari 2 (Kolom L:T bersebelahan)
+    // 5. Sinkronkan Roster Master Lengkap ke Tab Model B Matriks
+    // [No, NIM / NIP, Nama Lengkap, Angkatan, Hari 1, Hari 2, ..., Total Hadir, Catatan, Sinkron Terakhir]
     const syncResults = await syncCategorizedWithMasterRoster(
       config.sheet_id,
       studentList,
@@ -86,9 +91,8 @@ export async function POST(request: NextRequest) {
       date,
       lecturers,
       {
-        activeDay: extraTexts?.active_day || 'auto',
-        day1Date,
-        day2Date,
+        days,
+        activeDay: dayResolution.activeDay,
       }
     );
 
