@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
       .eq('id', config.id);
 
     const summaryText = syncResults
-      .map((r) => `${r.tabName} (${r.count} data${r.day2Generated ? ' • Termasuk Hari 2' : ''})`)
+      .map((r: any) => `${r.tabName} (${r.count} data${r.day2Generated ? ' • Termasuk Hari 2' : ''})`)
       .join(', ');
 
     return NextResponse.json({

@@ -8,6 +8,7 @@ import { checkAttendanceTimeLock } from '@/lib/timeLock';
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const rawNim = searchParams.get('nim');
+  const supabase = createAdminClient();
 
   if (!rawNim) {
     // Return active day info if no NIM provided
@@ -31,7 +32,6 @@ export async function GET(request: NextRequest) {
   }
 
   const nim = rawNim.trim();
-  const supabase = createAdminClient();
 
   try {
     // 1. Cari mahasiswa berdasarkan NIM (case-insensitive)
