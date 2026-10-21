@@ -327,6 +327,9 @@ export default function AdminMonitoringPage() {
         ? `DOSEN-${selectedStudentForManual.name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 15)}`
         : '');
 
+    const isViewingDay2 = date === dayConfig.day2Date || date > dayConfig.day1Date;
+    const targetDay = isViewingDay2 ? 2 : (date === dayConfig.day1Date ? 1 : dayConfig.resolvedActiveDay);
+
     setSavingManual(true);
     try {
       const res = await fetch('/api/attendance', {
@@ -341,14 +344,16 @@ export default function AdminMonitoringPage() {
           class_name: isDosen ? 'Dosen' : selectedStudentForManual.class_name,
           lecturer_name: isDosen ? selectedStudentForManual.name : undefined,
           status: manualStatus,
-          notes: manualNotes.trim() || 'Diabsenkan oleh Admin (Kendala HP/Perangkat)',
+          notes: manualNotes.trim() || `Diabsenkan oleh Admin (Kendala HP/Perangkat) - Hari ${targetDay}`,
           admin_override: true,
+          attendance_date: date,
+          day: targetDay,
         }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        toast.success(`Berhasil mencatat presensi ${selectedStudentForManual.name} (${manualStatus})!`);
+        toast.success(`Berhasil mencatat presensi Hari ke-${targetDay} untuk ${selectedStudentForManual.name} (${manualStatus})!`);
         setShowManualModal(false);
         fetchMonitoringData();
       } else {
@@ -899,6 +904,17 @@ export default function AdminMonitoringPage() {
             </div>
 
             <form onSubmit={handleSaveManualAttendance} className="space-y-4 pt-4">
+              {/* Info Sesi & Tanggal Presensi Manual */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                <span className="text-gray-500 font-medium">Target Presensi:</span>
+                <span className={`font-bold px-2 py-0.5 rounded-md ${
+                  (date === dayConfig.day2Date || date > dayConfig.day1Date)
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-blue-100 text-blue-800'
+                }`}>
+                  Hari ke-{(date === dayConfig.day2Date || date > dayConfig.day1Date) ? 2 : 1} ({date})
+                </span>
+              </div>
               {/* Jika dibuka dari tombol atas (belum pilih partisipan) */}
               {!selectedStudentForManual?.name ? (
                 <div>
