@@ -22,7 +22,8 @@ import {
   VolumeX,
   CalendarDays,
   Sparkles,
-  Layers
+  Layers,
+  Trash2
 } from 'lucide-react';
 import { formatDate, getWIBDate } from '@/lib/utils';
 import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
@@ -46,6 +47,17 @@ export default function AdminMonitoringPage() {
   const [manualNotes, setManualNotes] = useState('Diabsenkan oleh Admin (Kendala HP/Perangkat)');
   const [savingManual, setSavingManual] = useState(false);
   const [modalSearchStudent, setModalSearchStudent] = useState('');
+
+  // State untuk modal Konfirmasi Hapus / Reset Presensi
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    show: boolean;
+    student: any;
+    loading: boolean;
+  }>({
+    show: false,
+    student: null,
+    loading: false,
+  });
 
   const [metrics, setMetrics] = useState({
     totalStudents: 0,
@@ -346,6 +358,46 @@ export default function AdminMonitoringPage() {
       toast.error('Terjadi kesalahan jaringan');
     } finally {
       setSavingManual(false);
+    }
+  };
+
+  const handlePromptDeleteAttendance = (student: any) => {
+    setDeleteConfirmation({
+      show: true,
+      student,
+      loading: false,
+    });
+  };
+
+  const handleConfirmDeleteAttendance = async () => {
+    if (!deleteConfirmation.student) return;
+    const item = deleteConfirmation.student;
+    setDeleteConfirmation((prev) => ({ ...prev, loading: true }));
+
+    try {
+      const params = new URLSearchParams();
+      if (item.id && !item.id.startsWith('dosen-') && !item.id.startsWith('student-')) {
+        params.append('id', item.id);
+      }
+      params.append('nim', item.nim);
+      params.append('date', item.attendance_date || date);
+
+      const res = await fetch(`/api/admin/attendance?${params.toString()}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        toast.success(data.message || `Presensi ${item.name} berhasil dihapus & direset!`);
+        setDeleteConfirmation({ show: false, student: null, loading: false });
+        fetchMonitoringData(true);
+      } else {
+        toast.error(data.error || 'Gagal menghapus data presensi');
+        setDeleteConfirmation((prev) => ({ ...prev, loading: false }));
+      }
+    } catch (err: any) {
+      toast.error('Terjadi kesalahan jaringan');
+      setDeleteConfirmation((prev) => ({ ...prev, loading: false }));
     }
   };
 
@@ -798,10 +850,21 @@ export default function AdminMonitoringPage() {
                             <span>Absenkan</span>
                           </button>
                         ) : (
-                          <span className="text-[11px] text-emerald-600 font-semibold inline-flex items-center gap-1 whitespace-nowrap">
-                            <CheckCircle2 size={12} />
-                            Tercatat
-                          </span>
+                          <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <span className="text-[11px] text-emerald-600 font-semibold inline-flex items-center gap-1">
+                              <CheckCircle2 size={12} />
+                              Tercatat
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handlePromptDeleteAttendance(item)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 text-[10px] font-bold border border-rose-200 transition-all cursor-pointer shadow-2xs"
+                              title="Hapus / Reset data presensi ini dari Supabase & Google Sheets (berguna untuk tes)"
+                            >
+                              <Trash2 size={11} />
+                              <span>Hapus / Reset</span>
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -960,6 +1023,71 @@ export default function AdminMonitoringPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KONFIRMASI HAPUS / RESET PRESENSI */}
+      {deleteConfirmation.show && deleteConfirmation.student && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl animate-in zoom-in-95 duration-150 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 size={20} />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-[#111827]">Hapus & Reset Presensi?</h3>
+                <p className="text-[11px] text-gray-400">Data presensi akan dibatalkan</p>
+              </div>
+            </div>
+
+            <div className="bg-rose-50/60 border border-rose-200/80 rounded-xl p-3 text-xs space-y-1.5 text-rose-900">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Nama:</span>
+                <span className="font-bold">{deleteConfirmation.student.name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">NIM:</span>
+                <span className="font-mono font-bold">{deleteConfirmation.student.nim}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Tanggal:</span>
+                <span className="font-medium">{deleteConfirmation.student.attendance_date || date}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Tindakan ini akan <b>menghapus baris presensi dari Supabase</b> dan <b>mengembalikan status di Google Sheets ke 'Belum Hadir'</b>. NIM ini bisa melakukan presensi kembali setelah direset (sangat aman untuk pengujian/testing).
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-black/5">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmation({ show: false, student: null, loading: false })}
+                disabled={deleteConfirmation.loading}
+                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-[#4B5563] text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteAttendance}
+                disabled={deleteConfirmation.loading}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {deleteConfirmation.loading ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={13} />
+                    <span>Ya, Hapus & Reset</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
