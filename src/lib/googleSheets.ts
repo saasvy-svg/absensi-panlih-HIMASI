@@ -1621,10 +1621,10 @@ export async function syncCategorizedWithMasterRoster(
 
 /**
  * Rekap Gabungan: Combined Angkatan 2025 + 2026 ONLY (NO DOSEN).
- * Two clean tables placed at Column B to G:
- * - Table 1 (Top): SUDAH PRESENSI (sorted by check_in_time ASC)
- * - Table 2 (Bottom): BELUM PRESENSI (sorted by Angkatan, then NIM)
- * Columns L onwards stay completely clean/blank.
+ * Two clean tables placed SIDE-BY-SIDE:
+ * - Left Table (Kolom B s/d G): DAFTAR SUDAH PRESENSI (sorted by check_in_time ASC)
+ * - Kolom H: Kolom jeda/spasi (30px)
+ * - Right Table (Kolom I s/d N): DAFTAR BELUM PRESENSI (sorted by Angkatan, then NIM)
  */
 export async function syncRekapGabunganTab(
   sheetId: string,
@@ -1724,79 +1724,76 @@ export async function syncRekapGabunganTab(
     }
   }
 
-  // Sort Table 1 by check_in_time ASC
+  // Sort Left Table by check_in_time ASC
   presentList.sort((a, b) => a.rawTime.localeCompare(b.rawTime));
-  // Sort Table 2 by class_name then nim
+  // Sort Right Table by class_name then nim
   absentList.sort((a, b) =>
     String(a.class_name).localeCompare(String(b.class_name)) ||
     String(a.nim).localeCompare(String(b.nim))
   );
 
-  // 5. Build sheet data — 6 columns: B(No), C(Jam Masuk), D(NIM), E(Nama Lengkap), F(Angkatan), G(Status)
+  // 5. Left Table: DAFTAR SUDAH PRESENSI (Kolom B s/d G)
   const t1ColHeader = ['No', 'Jam Masuk', 'NIM', 'Nama Lengkap', 'Angkatan', 'Status'];
   const t1Rows =
     presentList.length > 0
       ? presentList.map((p, idx) => [idx + 1, `${p.time} WIB`, p.nim, p.name, p.class_name, p.status])
       : [['-', '-', '-', 'Belum ada mahasiswa yang presensi hari ini', '-', '-']];
 
-  const T1_TITLE = 2;
-  const T1_SUBTITLE = 3;
-  const T1_SECTION = 4;
-  const T1_HEADER = 5;
-  const T1_DATA = 6;
-  const T1_END = T1_DATA + t1Rows.length - 1;
+  const T1_DATA_START = 5;
+  const T1_END = T1_DATA_START + t1Rows.length - 1;
 
-  const T2_TITLE = T1_END + 3;
-  const T2_SUBTITLE = T2_TITLE + 1;
-  const T2_HEADER = T2_SUBTITLE + 1;
-  const T2_DATA = T2_HEADER + 1;
-
+  // 6. Right Table: DAFTAR BELUM PRESENSI (Kolom I s/d N)
   const t2ColHeader = ['No', 'Jam Masuk', 'NIM', 'Nama Lengkap', 'Angkatan', 'Status'];
   const t2Rows =
     absentList.length > 0
       ? absentList.map((a, idx) => [idx + 1, '-', a.nim, a.name, a.class_name, 'Belum Hadir'])
       : [['-', '-', '-', 'Seluruh mahasiswa Angkatan 2025 & 2026 sudah hadir! 🎉', '-', 'Lengkap']];
-  const T2_END = T2_DATA + t2Rows.length - 1;
 
-  // Write Table 1 Values (B2:G...)
+  const T2_DATA_START = 5;
+  const T2_END = T2_DATA_START + t2Rows.length - 1;
+
+  // Write Left Table (B2:G...)
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
     range: `'${tabName}'!B2:G${T1_END}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [
-        [`REKAP GABUNGAN MAHASISWA (ANGKATAN 2025 & 2026) • Sesi ${targetDate}`, '', '', '', '', ''],
-        [`Diurutkan berdasarkan waktu kehadiran tercepat • Sistem Presensi HIMASI`, '', '', '', '', ''],
         [`DAFTAR SUDAH PRESENSI (${presentList.length} MAHASISWA)`, '', '', '', '', ''],
+        [`Urut berdasarkan waktu kehadiran tercepat • Sesi ${targetDate}`, '', '', '', '', ''],
         t1ColHeader,
         ...t1Rows,
       ],
     },
   });
 
-  // Write Table 2 Values (B${T2_TITLE}:G...)
+  // Write Right Table (I2:N...)
   await sheets.spreadsheets.values.update({
     spreadsheetId: sheetId,
-    range: `'${tabName}'!B${T2_TITLE}:G${T2_END}`,
+    range: `'${tabName}'!I2:N${T2_END}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [
         [`DAFTAR BELUM PRESENSI (${absentList.length} MAHASISWA)`, '', '', '', '', ''],
-        [`Mahasiswa Angkatan 2025 & 2026 yang belum presensi pada hari ini`, '', '', '', '', ''],
+        [`Mahasiswa Angkatan 2025 & 2026 yang belum presensi hari ini`, '', '', '', '', ''],
         t2ColHeader,
         ...t2Rows,
       ],
     },
   });
 
-  // 6. Formatting styling
+  // 7. Formatting styling
   if (sheetNumericId !== undefined) {
-    const endColIdx = 7; // G is index 6, exclusive = 7
+    const leftStartCol = 1; // Col B (index 1)
+    const leftEndCol = 7;   // Col G (index 6, exclusive 7)
+    const gapCol = 7;       // Col H (index 7, exclusive 8)
+    const rightStartCol = 8; // Col I (index 8)
+    const rightEndCol = 14;  // Col N (index 13, exclusive 14)
 
     const requests: any[] = [
-      { updateSheetProperties: { properties: { sheetId: sheetNumericId, gridProperties: { frozenRowCount: 2 } }, fields: 'gridProperties.frozenRowCount' } },
+      { updateSheetProperties: { properties: { sheetId: sheetNumericId, gridProperties: { frozenRowCount: 4 } }, fields: 'gridProperties.frozenRowCount' } },
 
-      // Explicit Column widths
+      // Column widths
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 25 }, fields: 'pixelSize' } },  // A
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 1, endIndex: 2 }, properties: { pixelSize: 45 }, fields: 'pixelSize' } },  // B: No
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 }, properties: { pixelSize: 115 }, fields: 'pixelSize' } }, // C: Jam Masuk
@@ -1804,40 +1801,20 @@ export async function syncRekapGabunganTab(
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 4, endIndex: 5 }, properties: { pixelSize: 240 }, fields: 'pixelSize' } }, // E: Nama Lengkap
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 5, endIndex: 6 }, properties: { pixelSize: 120 }, fields: 'pixelSize' } }, // F: Angkatan
       { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { pixelSize: 100 }, fields: 'pixelSize' } }, // G: Status
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: gapCol, endIndex: gapCol + 1 }, properties: { pixelSize: 30 }, fields: 'pixelSize' } }, // H: Gap
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 8, endIndex: 9 }, properties: { pixelSize: 45 }, fields: 'pixelSize' } },  // I: No
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 9, endIndex: 10 }, properties: { pixelSize: 115 }, fields: 'pixelSize' } }, // J: Jam Masuk
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 10, endIndex: 11 }, properties: { pixelSize: 110 }, fields: 'pixelSize' } }, // K: NIM
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 11, endIndex: 12 }, properties: { pixelSize: 240 }, fields: 'pixelSize' } }, // L: Nama Lengkap
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 12, endIndex: 13 }, properties: { pixelSize: 120 }, fields: 'pixelSize' } }, // M: Angkatan
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 13, endIndex: 14 }, properties: { pixelSize: 100 }, fields: 'pixelSize' } }, // N: Status
 
-      // Main Title B2 (Navy)
-      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 1, endColumnIndex: endColIdx }, mergeType: 'MERGE_ALL' } },
+      // ── LEFT TABLE (SUDAH PRESENSI) ──
+      // Title B2:G2 (Emerald)
+      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol }, mergeType: 'MERGE_ALL' } },
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 1, endColumnIndex: endColIdx },
-          cell: { userEnteredFormat: {
-            backgroundColor: { red: 0.07, green: 0.14, blue: 0.28 },
-            textFormat: { bold: true, fontSize: 13, foregroundColor: { red: 1, green: 1, blue: 1 } },
-            horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE',
-          }},
-          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
-        },
-      },
-
-      // Subtitle B3
-      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: 1, endColumnIndex: endColIdx }, mergeType: 'MERGE_ALL' } },
-      {
-        repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: 1, endColumnIndex: endColIdx },
-          cell: { userEnteredFormat: {
-            backgroundColor: { red: 0.93, green: 0.95, blue: 0.99 },
-            textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.3, green: 0.35, blue: 0.5 } },
-            horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE',
-          }},
-          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
-        },
-      },
-
-      // Table 1 Section Banner B4 (Emerald)
-      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 1, endColumnIndex: endColIdx }, mergeType: 'MERGE_ALL' } },
-      {
-        repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.04, green: 0.38, blue: 0.27 },
             textFormat: { bold: true, fontSize: 11, foregroundColor: { red: 1, green: 1, blue: 1 } },
@@ -1846,11 +1823,23 @@ export async function syncRekapGabunganTab(
           fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
         },
       },
-
-      // Table 1 Column Headers B5 (Bright Emerald)
+      // Subtitle B3:G3
+      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol }, mergeType: 'MERGE_ALL' } },
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 5, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol },
+          cell: { userEnteredFormat: {
+            backgroundColor: { red: 0.93, green: 0.98, blue: 0.95 },
+            textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.1, green: 0.4, blue: 0.25 } },
+            horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE',
+          }},
+          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+        },
+      },
+      // Headers B4:G4 (Bright Emerald)
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.06, green: 0.62, blue: 0.45 },
             textFormat: { bold: true, fontSize: 10, foregroundColor: { red: 1, green: 1, blue: 1 } },
@@ -1859,47 +1848,54 @@ export async function syncRekapGabunganTab(
           fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
         },
       },
-
-      // Table 1 Data: No, Jam, NIM centered
+      // Left Data Rows
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T1_DATA - 1, endRowIndex: T1_END, startColumnIndex: 1, endColumnIndex: 4 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol },
+          cell: { userEnteredFormat: { verticalAlignment: 'MIDDLE', textFormat: { fontSize: 10 } } },
+          fields: 'userEnteredFormat(verticalAlignment,textFormat.fontSize)',
         },
       },
-      // Nama Lengkap left+bold
+      // Left Data: No, Jam, NIM centered
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T1_DATA - 1, endRowIndex: T1_END, startColumnIndex: 4, endColumnIndex: 5 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', verticalAlignment: 'MIDDLE', textFormat: { bold: true, fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.bold,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol, endColumnIndex: leftStartCol + 3 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
         },
       },
-      // Angkatan centered
+      // Left Data: Nama Lengkap left+bold
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T1_DATA - 1, endRowIndex: T1_END, startColumnIndex: 5, endColumnIndex: 6 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { bold: true, fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.bold,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol + 3, endColumnIndex: leftStartCol + 4 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', textFormat: { bold: true } } },
+          fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
         },
       },
-      // Status Badge Green (G)
+      // Left Data: Angkatan centered
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T1_DATA - 1, endRowIndex: T1_END, startColumnIndex: 6, endColumnIndex: 7 },
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol + 4, endColumnIndex: leftStartCol + 5 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', textFormat: { bold: true } } },
+          fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
+        },
+      },
+      // Left Data: Status Badge Green
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol + 5, endColumnIndex: leftEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.86, green: 0.98, blue: 0.9 },
-            textFormat: { bold: true, foregroundColor: { red: 0.08, green: 0.5, blue: 0.24 }, fontSize: 10 },
-            horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE',
+            textFormat: { bold: true, foregroundColor: { red: 0.08, green: 0.5, blue: 0.24 } },
+            horizontalAlignment: 'CENTER',
           }},
-          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
         },
       },
-      // Table 1 Borders
+      // Left Data Borders
       {
         updateBorders: {
-          range: { sheetId: sheetNumericId, startRowIndex: T1_DATA - 1, endRowIndex: T1_END, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t1Rows.length, startColumnIndex: leftStartCol, endColumnIndex: leftEndCol },
           top: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           bottom: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           left: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
@@ -1909,11 +1905,12 @@ export async function syncRekapGabunganTab(
         },
       },
 
-      // Table 2 Title Banner (Dark Slate)
-      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: T2_TITLE - 1, endRowIndex: T2_TITLE, startColumnIndex: 1, endColumnIndex: endColIdx }, mergeType: 'MERGE_ALL' } },
+      // ── RIGHT TABLE (BELUM PRESENSI) ──
+      // Title I2:N2 (Dark Slate)
+      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol }, mergeType: 'MERGE_ALL' } },
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_TITLE - 1, endRowIndex: T2_TITLE, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 1, endRowIndex: 2, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.15, green: 0.2, blue: 0.28 },
             textFormat: { bold: true, fontSize: 11, foregroundColor: { red: 1, green: 1, blue: 1 } },
@@ -1922,12 +1919,11 @@ export async function syncRekapGabunganTab(
           fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
         },
       },
-
-      // Table 2 Subtitle
-      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: T2_SUBTITLE - 1, endRowIndex: T2_SUBTITLE, startColumnIndex: 1, endColumnIndex: endColIdx }, mergeType: 'MERGE_ALL' } },
+      // Subtitle I3:N3
+      { mergeCells: { range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol }, mergeType: 'MERGE_ALL' } },
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_SUBTITLE - 1, endRowIndex: T2_SUBTITLE, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 2, endRowIndex: 3, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.96, green: 0.97, blue: 0.99 },
             textFormat: { italic: true, fontSize: 9, foregroundColor: { red: 0.35, green: 0.4, blue: 0.5 } },
@@ -1936,11 +1932,10 @@ export async function syncRekapGabunganTab(
           fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
         },
       },
-
-      // Table 2 Column Headers
+      // Headers I4:N4 (Slate)
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_HEADER - 1, endRowIndex: T2_HEADER, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 3, endRowIndex: 4, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.25, green: 0.3, blue: 0.4 },
             textFormat: { bold: true, fontSize: 10, foregroundColor: { red: 1, green: 1, blue: 1 } },
@@ -1949,51 +1944,78 @@ export async function syncRekapGabunganTab(
           fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
         },
       },
-
-      // Table 2 Data
+      // Right Data Rows
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_DATA - 1, endRowIndex: T2_END, startColumnIndex: 1, endColumnIndex: 4 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol },
+          cell: { userEnteredFormat: { verticalAlignment: 'MIDDLE', textFormat: { fontSize: 10 } } },
+          fields: 'userEnteredFormat(verticalAlignment,textFormat.fontSize)',
         },
       },
+      // Right Data: No, Jam, NIM centered
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_DATA - 1, endRowIndex: T2_END, startColumnIndex: 4, endColumnIndex: 5 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', verticalAlignment: 'MIDDLE', textFormat: { bold: true, fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.bold,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol, endColumnIndex: rightStartCol + 3 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
         },
       },
+      // Right Data: Nama Lengkap left+bold
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_DATA - 1, endRowIndex: T2_END, startColumnIndex: 5, endColumnIndex: 6 },
-          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE', textFormat: { bold: true, fontSize: 10 } } },
-          fields: 'userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat.bold,textFormat.fontSize)',
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol + 3, endColumnIndex: rightStartCol + 4 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT', textFormat: { bold: true } } },
+          fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
         },
       },
-      // Status Badge Soft Red (G)
+      // Right Data: Angkatan centered
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_DATA - 1, endRowIndex: T2_END, startColumnIndex: 6, endColumnIndex: 7 },
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol + 4, endColumnIndex: rightStartCol + 5 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', textFormat: { bold: true } } },
+          fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
+        },
+      },
+      // Right Data: Status Badge Soft Red
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol + 5, endColumnIndex: rightEndCol },
           cell: { userEnteredFormat: {
             backgroundColor: { red: 0.99, green: 0.9, blue: 0.9 },
-            textFormat: { bold: true, foregroundColor: { red: 0.72, green: 0.15, blue: 0.15 }, fontSize: 10 },
-            horizontalAlignment: 'CENTER', verticalAlignment: 'MIDDLE',
+            textFormat: { bold: true, foregroundColor: { red: 0.72, green: 0.15, blue: 0.15 } },
+            horizontalAlignment: 'CENTER',
           }},
-          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+          fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)',
         },
       },
-      // Table 2 Borders
+      // Right Data Borders
       {
         updateBorders: {
-          range: { sheetId: sheetNumericId, startRowIndex: T2_DATA - 1, endRowIndex: T2_END, startColumnIndex: 1, endColumnIndex: endColIdx },
+          range: { sheetId: sheetNumericId, startRowIndex: 4, endRowIndex: 4 + t2Rows.length, startColumnIndex: rightStartCol, endColumnIndex: rightEndCol },
           top: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           bottom: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           left: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           right: { style: 'SOLID', color: { red: 0.85, green: 0.88, blue: 0.92 } },
           innerHorizontal: { style: 'SOLID', color: { red: 0.9, green: 0.92, blue: 0.95 } },
           innerVertical: { style: 'SOLID', color: { red: 0.9, green: 0.92, blue: 0.95 } },
+        },
+      },
+
+      // Header row heights
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'ROWS', startIndex: 1, endIndex: 2 }, properties: { pixelSize: 32 }, fields: 'pixelSize' } },
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'ROWS', startIndex: 2, endIndex: 3 }, properties: { pixelSize: 22 }, fields: 'pixelSize' } },
+      { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'ROWS', startIndex: 3, endIndex: 4 }, properties: { pixelSize: 36 }, fields: 'pixelSize' } },
+      // Data rows height
+      {
+        updateDimensionProperties: {
+          range: {
+            sheetId: sheetNumericId,
+            dimension: 'ROWS',
+            startIndex: 4,
+            endIndex: 4 + Math.max(t1Rows.length, t2Rows.length),
+          },
+          properties: { pixelSize: 26 },
+          fields: 'pixelSize',
         },
       },
     ];
