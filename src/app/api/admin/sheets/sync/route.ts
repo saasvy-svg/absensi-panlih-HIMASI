@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { syncCategorizedWithMasterRoster } from '@/lib/googleSheets';
 import { getWIBDate } from '@/lib/utils';
+import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +25,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Ambil seluruh data master mahasiswa aktif
+    // 2. Ambil konfigurasi landing settings (dosen, tanggal Hari 1 & Hari 2)
+    const { data: landingData } = await supabase
+      .from('landing_settings')
+      .select('extra_texts')
+      .maybeSingle();
+
+    const extraTexts = landingData?.extra_texts;
+    const dayResolution = resolveActiveDay(extraTexts, date);
+    const day1Date = dayResolution.day1Date;
+    const day2Date = dayResolution.day2Date;
+    const lecturers: string[] = extraTexts?.lecturers || [];
+
+    // 3. Ambil seluruh data master mahasiswa aktif
     const { data: allStudents, error: studentError } = await supabase
       .from('students')
       .select('*')
@@ -35,14 +48,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: studentError.message }, { status: 500 });
     }
 
-    // 3. Ambil data absensi pada tanggal tersebut
+    // 4. Ambil data absensi (ambil absensi Hari 1 dan Hari 2 jika ada)
     let query = supabase
       .from('attendances')
       .select('*')
       .order('check_in_time', { ascending: true });
 
     if (date !== 'all') {
-      query = query.eq('attendance_date', date);
+      // Ambil data untuk tanggal hari 1 & hari 2 agar sinkronisasi 2 tabel lengkap
+      query = query.in('attendance_date', [day1Date, day2Date, date]);
     }
 
     const { data: attendances, error: attError } = await query;
@@ -54,14 +68,6 @@ export async function POST(request: NextRequest) {
     const studentList = allStudents || [];
     const attendanceList = attendances || [];
 
-    // Ambil daftar dosen aktif dari landing settings
-    const { data: landingData } = await supabase
-      .from('landing_settings')
-      .select('extra_texts')
-      .maybeSingle();
-
-    const lecturers: string[] = landingData?.extra_texts?.lecturers || [];
-
     if (studentList.length === 0 && attendanceList.length === 0 && lecturers.length === 0) {
       return NextResponse.json({
         success: true,
@@ -71,25 +77,29 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 4. Sinkronkan Roster Master Lengkap ke Tab masing-masing (Angkatan 25, Angkatan 26, Dosen)
-    // Mahasiswa dan Dosen yang belum absen otomatis tercatat "Belum Hadir" (dengan jam "-")
-    // Mahasiswa dan Dosen yang sudah absen tercatat "Hadir" lengkap dengan jam masuk
+    // 5. Sinkronkan Roster Master Lengkap ke Tab masing-masing (Angkatan 2025, Angkatan 2026, Dosen)
+    // Mendukung Hari 1 (Kolom B:J) dan Hari 2 (Kolom L:T bersebelahan)
     const syncResults = await syncCategorizedWithMasterRoster(
       config.sheet_id,
       studentList,
       attendanceList,
       date,
-      lecturers
+      lecturers,
+      {
+        activeDay: extraTexts?.active_day || 'auto',
+        day1Date,
+        day2Date,
+      }
     );
 
-    // 5. Update last_synced_at
+    // 6. Update last_synced_at
     await supabase
       .from('sheet_configs')
       .update({ last_synced_at: new Date().toISOString() })
       .eq('id', config.id);
 
     const summaryText = syncResults
-      .map((r) => `${r.tabName} (${r.count} data)`)
+      .map((r) => `${r.tabName} (${r.count} data${r.day2Generated ? ' • Termasuk Hari 2' : ''})`)
       .join(', ');
 
     return NextResponse.json({
@@ -98,6 +108,9 @@ export async function POST(request: NextRequest) {
       totalStudents: studentList.length,
       totalPresent: attendanceList.length,
       tabs: syncResults,
+      activeDay: dayResolution.activeDay,
+      day1Date,
+      day2Date,
       date,
     });
   } catch (error: any) {

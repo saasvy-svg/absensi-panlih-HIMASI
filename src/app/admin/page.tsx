@@ -19,9 +19,13 @@ import {
   X,
   ShieldCheck,
   Volume2,
-  VolumeX
+  VolumeX,
+  CalendarDays,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { formatDate, getWIBDate } from '@/lib/utils';
+import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
 import Link from 'next/link';
 import { createClient } from '@/utils/supabase/client';
 
@@ -58,14 +62,72 @@ export default function AdminMonitoringPage() {
   const [antiTitipActive, setAntiTitipActive] = useState(true);
   const [togglingAntiTitip, setTogglingAntiTitip] = useState(false);
 
-  const fetchAntiTitipStatus = async () => {
+  const [dayConfig, setDayConfig] = useState<{
+    activeDaySetting: 1 | 2 | 'auto';
+    day1Date: string;
+    day2Date: string;
+    resolvedActiveDay: 1 | 2;
+  }>({
+    activeDaySetting: 'auto',
+    day1Date: getWIBDate(),
+    day2Date: getNextWIBDate(getWIBDate()),
+    resolvedActiveDay: 1,
+  });
+  const [switchingDay, setSwitchingDay] = useState(false);
+
+  const fetchLandingConfig = async () => {
     try {
       const res = await fetch('/api/admin/settings/landing');
       const data = await res.json();
       if (res.ok && data.data?.extra_texts) {
-        setAntiTitipActive(data.data.extra_texts.anti_titip_enabled !== false);
+        const ext = data.data.extra_texts;
+        setAntiTitipActive(ext.anti_titip_enabled !== false);
+        const resolved = resolveActiveDay(ext);
+        setDayConfig({
+          activeDaySetting: ext.active_day || 'auto',
+          day1Date: resolved.day1Date,
+          day2Date: resolved.day2Date,
+          resolvedActiveDay: resolved.activeDay,
+        });
       }
     } catch (e) {}
+  };
+
+  const handleQuickSwitchDay = async (mode: 1 | 2 | 'auto') => {
+    setSwitchingDay(true);
+    try {
+      const resGet = await fetch('/api/admin/settings/landing');
+      const dataGet = await resGet.json();
+      if (resGet.ok && dataGet.data) {
+        const updatedForm = {
+          ...dataGet.data,
+          extra_texts: {
+            ...dataGet.data.extra_texts,
+            active_day: mode,
+          },
+        };
+        const resPost = await fetch('/api/admin/settings/landing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedForm),
+        });
+        if (resPost.ok) {
+          const resolved = resolveActiveDay(updatedForm.extra_texts);
+          setDayConfig({
+            activeDaySetting: mode,
+            day1Date: resolved.day1Date,
+            day2Date: resolved.day2Date,
+            resolvedActiveDay: resolved.activeDay,
+          });
+          const label = mode === 'auto' ? 'Otomatis' : `Hari ke-${mode}`;
+          toast.success(`📅 Sesi Presensi Aktif diubah ke: ${label}`);
+        }
+      }
+    } catch (e) {
+      toast.error('Gagal memperbarui sesi presensi');
+    } finally {
+      setSwitchingDay(false);
+    }
   };
 
   const handleToggleAntiTitipQuick = async () => {
@@ -125,7 +187,7 @@ export default function AdminMonitoringPage() {
 
   useEffect(() => {
     fetchMonitoringData();
-    fetchAntiTitipStatus();
+    fetchLandingConfig();
 
     // 1. Supabase Realtime WebSocket (Broadcast 0-detik + Postgres Changes)
     const supabase = createClient();
@@ -353,6 +415,29 @@ export default function AdminMonitoringPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+          {/* Quick Saklar Sesi Aktif Presensi (Hari 1 / Hari 2 / Auto) */}
+          <button
+            onClick={() => {
+              const nextMode =
+                dayConfig.activeDaySetting === 'auto'
+                  ? 1
+                  : dayConfig.activeDaySetting === 1
+                  ? 2
+                  : 'auto';
+              handleQuickSwitchDay(nextMode);
+            }}
+            disabled={switchingDay}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer whitespace-nowrap shadow-2xs ${
+              dayConfig.resolvedActiveDay === 2
+                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-300'
+            }`}
+            title={`Klik untuk ganti sesi presensi peserta (Saat ini: Hari ${dayConfig.resolvedActiveDay} - Mode ${dayConfig.activeDaySetting})`}
+          >
+            <CalendarDays size={14} className={dayConfig.resolvedActiveDay === 2 ? 'text-emerald-600' : 'text-blue-600'} />
+            <span>Sesi: Hari {dayConfig.resolvedActiveDay} ({dayConfig.activeDaySetting === 'auto' ? 'Auto' : 'Manual'})</span>
+          </button>
+
           {/* Quick Saklar Anti-Titip Absen */}
           <button
             onClick={handleToggleAntiTitipQuick}
@@ -482,6 +567,46 @@ export default function AdminMonitoringPage() {
               onChange={(e) => setDate(e.target.value)}
               className="bg-transparent text-xs font-semibold text-[#111827] outline-hidden cursor-pointer"
             />
+          </div>
+
+          {/* Quick Day Switch Pills */}
+          <div className="flex items-center gap-1 bg-[#F8F9FA] p-1 rounded-xl border border-black/5">
+            <button
+              type="button"
+              onClick={() => setDate(dayConfig.day1Date)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                date === dayConfig.day1Date
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+              title={`Tampilkan data presensi Hari 1 (${dayConfig.day1Date})`}
+            >
+              Hari 1
+            </button>
+            <button
+              type="button"
+              onClick={() => setDate(dayConfig.day2Date)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                date === dayConfig.day2Date
+                  ? 'bg-emerald-600 text-white shadow-2xs'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/60'
+              }`}
+              title={`Tampilkan data presensi Hari 2 (${dayConfig.day2Date})`}
+            >
+              Hari 2
+            </button>
+            <button
+              type="button"
+              onClick={() => setDate(getWIBDate())}
+              className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                date === getWIBDate() && date !== dayConfig.day1Date && date !== dayConfig.day2Date
+                  ? 'bg-gray-800 text-white shadow-2xs'
+                  : 'text-gray-500 hover:text-gray-800 hover:bg-gray-200/60'
+              }`}
+              title="Tampilkan tanggal hari ini"
+            >
+              Hari Ini
+            </button>
           </div>
 
           {/* Filter Angkatan / Dosen */}

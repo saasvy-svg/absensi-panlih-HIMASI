@@ -14,9 +14,15 @@ import {
   FileText,
   UserCheck,
   Plus,
-  ShieldCheck
+  ShieldCheck,
+  CalendarDays,
+  Calendar,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import Link from 'next/link';
+import { getWIBDate } from '@/lib/utils';
+import { getNextWIBDate, resolveActiveDay } from '@/lib/dayHelper';
 
 export default function LandingSettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -45,6 +51,9 @@ export default function LandingSettingsPage() {
       ],
       lecturers: [] as string[],
       anti_titip_enabled: true,
+      active_day: 'auto' as 'auto' | 1 | 2,
+      day1_date: '',
+      day2_date: '',
       card1_title: 'Waktu Presensi',
       card1_desc: '07.00 - 17.00 WIB',
       card2_title: 'Presisi NIM',
@@ -250,6 +259,57 @@ export default function LandingSettingsPage() {
       }
     } catch (e) {
       toast.error('Terjadi kesalahan jaringan');
+    }
+  };
+
+  const handleSetActiveDay = async (mode: 1 | 2 | 'auto') => {
+    const updatedExtra = {
+      ...form.extra_texts,
+      active_day: mode,
+    };
+    const updatedForm = { ...form, extra_texts: updatedExtra };
+    setForm(updatedForm);
+
+    try {
+      const res = await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedForm),
+      });
+      if (res.ok) {
+        const label =
+          mode === 'auto'
+            ? 'Otomatis (Sesuai Tanggal)'
+            : `Paksa Hari ${mode}`;
+        toast.success(`📅 Sesi Presensi diubah ke: ${label}`);
+        window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+      } else {
+        toast.error('Gagal memperbarui mode sesi');
+      }
+    } catch (e) {
+      toast.error('Terjadi kesalahan jaringan');
+    }
+  };
+
+  const handleUpdateDayDates = async (day1Val?: string, day2Val?: string) => {
+    const updatedExtra = {
+      ...form.extra_texts,
+      day1_date: day1Val !== undefined ? day1Val : form.extra_texts?.day1_date,
+      day2_date: day2Val !== undefined ? day2Val : form.extra_texts?.day2_date,
+    };
+    const updatedForm = { ...form, extra_texts: updatedExtra };
+    setForm(updatedForm);
+
+    try {
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedForm),
+      });
+      toast.success('Tanggal Sesi Hari 1 & Hari 2 berhasil disimpan! 📅');
+      window.dispatchEvent(new CustomEvent('landing-settings-updated'));
+    } catch (e) {
+      toast.error('Gagal menyimpan tanggal sesi');
     }
   };
 
@@ -548,13 +608,183 @@ export default function LandingSettingsPage() {
           </div>
         </div>
 
-        {/* BAGIAN 4: KELOLA DAFTAR DOSEN */}
+        {/* BAGIAN 4: SESI PRESENSI 2 HARI (PEMIRA HIMASI) */}
+        {(() => {
+          const resolved = resolveActiveDay(form.extra_texts);
+          const currentMode = form.extra_texts?.active_day || 'auto';
+          const day1Val = form.extra_texts?.day1_date || resolved.day1Date;
+          const day2Val = form.extra_texts?.day2_date || resolved.day2Date;
+
+          return (
+            <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
+                      <CalendarDays size={18} />
+                      4. Sesi Hari Presensi (Pemira HIMASI 2 Hari)
+                    </h2>
+                    <span className="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      Auto-Save Aktif
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#6B7280] max-w-xl">
+                    Sistem mendukung presensi 2 hari berturut-turut. Tabel Hari ke-2 otomatis di-generate di Google Sheets sebelah kanan (Kolom <b>L sampai T</b>) bersebelahan dengan Hari ke-1 (Kolom <b>B sampai J</b>) tanpa saling menimpa.
+                  </p>
+                </div>
+
+                {/* Status Aktif Saat Ini Pill */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs text-gray-500 font-medium">Sesi Terdeteksi:</span>
+                  <span className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 ${
+                    resolved.activeDay === 2
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-blue-100 text-blue-800 border border-blue-300'
+                  }`}>
+                    <Sparkles size={13} />
+                    <span>HARI KE-{resolved.activeDay} ({resolved.activeDay === 1 ? day1Val : day2Val})</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Selector Mode Sesi */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-700 block">
+                  Pilih Mode Pengaturan Sesi:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleSetActiveDay('auto')}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      currentMode === 'auto'
+                        ? 'bg-blue-50/70 border-blue-500 ring-2 ring-blue-500/20 text-[#1E3A8A]'
+                        : 'bg-gray-50/70 border-gray-200 hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold flex items-center gap-1.5">
+                        <Calendar size={14} className={currentMode === 'auto' ? 'text-blue-600' : 'text-gray-500'} />
+                        Otomatis (Sesuai Tanggal)
+                      </span>
+                      {currentMode === 'auto' && (
+                        <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-tight">
+                      Hari 1 pada {day1Val}, otomatis beralih ke Hari 2 pada {day2Val}.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSetActiveDay(1)}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      currentMode === 1
+                        ? 'bg-blue-50/70 border-blue-500 ring-2 ring-blue-500/20 text-[#1E3A8A]'
+                        : 'bg-gray-50/70 border-gray-200 hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold flex items-center gap-1.5">
+                        <Layers size={14} className={currentMode === 1 ? 'text-blue-600' : 'text-gray-500'} />
+                        Paksa Hari ke-1 (Manual)
+                      </span>
+                      {currentMode === 1 && (
+                        <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-tight">
+                      Kunci semua presensi masuk ke tabel Hari ke-1 (Kolom B - J).
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSetActiveDay(2)}
+                    className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                      currentMode === 2
+                        ? 'bg-emerald-50/70 border-emerald-500 ring-2 ring-emerald-500/20 text-emerald-900'
+                        : 'bg-gray-50/70 border-gray-200 hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold flex items-center gap-1.5">
+                        <Layers size={14} className={currentMode === 2 ? 'text-emerald-600' : 'text-gray-500'} />
+                        Paksa Hari ke-2 (Manual)
+                      </span>
+                      {currentMode === 2 && (
+                        <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-tight">
+                      Kunci semua presensi masuk ke tabel Hari ke-2 (Kolom L - T).
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Tanggal Hari 1 & Hari 2 Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                <div className="bg-gray-50/70 p-3.5 rounded-xl border border-gray-200 space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <span>📅 Tanggal Hari ke-1:</span>
+                    <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">Kolom B - J</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={form.extra_texts?.day1_date || day1Val}
+                    onChange={(e) => handleUpdateDayDates(e.target.value, undefined)}
+                    className="w-full bg-white px-3 py-2 text-xs rounded-lg border border-gray-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-[10px] text-gray-400">Tanggal pembukaan hari pertama Pemira</p>
+                </div>
+
+                <div className="bg-emerald-50/40 p-3.5 rounded-xl border border-emerald-200 space-y-1.5">
+                  <label className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                    <span>📅 Tanggal Hari ke-2:</span>
+                    <span className="text-[10px] text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300">Kolom L - T (Auto)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={form.extra_texts?.day2_date || day2Val}
+                    onChange={(e) => handleUpdateDayDates(undefined, e.target.value)}
+                    className="w-full bg-white px-3 py-2 text-xs rounded-lg border border-emerald-300 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <p className="text-[10px] text-emerald-600/70">Tanggal hari kedua Pemira (tabel otomatis dibuat di kanan)</p>
+                </div>
+              </div>
+
+              {/* Info Banner Struktur Google Sheets */}
+              <div className="bg-linear-to-r from-blue-50 via-slate-50 to-emerald-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
+                <div className="font-bold text-slate-800 flex items-center gap-2">
+                  <span>📊 Struktur Tabel Google Sheets (Side-by-Side):</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+                  <div className="bg-white p-2.5 rounded-lg border border-blue-200 text-blue-900">
+                    <span className="font-bold block">Kolom B - J: Hari ke-1</span>
+                    <span className="text-gray-500 text-[10px]">No, Jam Masuk, Tanggal, NIM, Nama, Angkatan, Status, Catatan, Sync</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-slate-600 flex items-center justify-center font-bold">
+                    <span>Kolom K: Pembatas (Kosong)</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-300 text-emerald-900">
+                    <span className="font-bold block">Kolom L - T: Hari ke-2</span>
+                    <span className="text-gray-500 text-[10px]">No, Jam Masuk, Tanggal, NIM, Nama, Angkatan, Status, Catatan, Sync</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* BAGIAN 5: KELOLA DAFTAR DOSEN */}
         <div className="bg-white rounded-2xl border border-black/5 shadow-2xs p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold text-[#111827] uppercase tracking-wider text-[#2563EB] flex items-center gap-2">
                 <UserCheck size={16} />
-                4. Kelola Daftar Dosen
+                5. Kelola Daftar Dosen
               </h2>
               <p className="text-xs text-[#6B7280] mt-1">
                 Daftar dosen ini akan muncul pada pilihan dropdown saat tab 'Presensi Dosen' dipilih di halaman depan.
