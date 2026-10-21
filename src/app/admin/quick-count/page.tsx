@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import { 
   BarChart3, 
@@ -20,10 +20,7 @@ import {
   RotateCcw, 
   Trash2, 
   Edit3, 
-  ExternalLink,
-  ChevronRight,
   TrendingUp,
-  Sparkles,
   Loader2
 } from 'lucide-react';
 import { getWIBDate } from '@/lib/utils';
@@ -63,6 +60,37 @@ export default function QuickCountPage() {
   const [formTagline, setFormTagline] = useState('');
   const [formPhoto, setFormPhoto] = useState('');
 
+  // ───────────────────────────────────────────────────────────────────
+  // RACE CONDITION PREVENTION REFS
+  // 1. candidatesRef  — canonical source of truth that is ALWAYS latest
+  // 2. invalidRef     — same for invalid votes
+  // 3. notesRef       — same for notes
+  // 4. isLockedRef    — same for lock
+  // 5. saveQueueRef   — queued state waiting to be saved once current save finishes
+  // 6. isSavingRef    — mutex: only one in-flight save at a time
+  // 7. lastActionRef  — timestamp of last user click; polling skips if < 5 s ago
+  // 8. saveSeqRef     — monotonically increasing counter to discard stale responses
+  // ───────────────────────────────────────────────────────────────────
+  const candidatesRef = useRef<QuickCountCandidate[]>([]);
+  const invalidRef = useRef(0);
+  const notesRef = useRef('');
+  const isLockedRef = useRef(false);
+  const saveQueueRef = useRef<{
+    candidates: QuickCountCandidate[];
+    invalid: number;
+    notes: string;
+    locked: boolean;
+  } | null>(null);
+  const isSavingRef = useRef(false);
+  const lastActionRef = useRef(0);
+  const saveSeqRef = useRef(0);
+
+  // Keep refs in sync with state
+  useEffect(() => { candidatesRef.current = candidates; }, [candidates]);
+  useEffect(() => { invalidRef.current = invalidVotes; }, [invalidVotes]);
+  useEffect(() => { notesRef.current = notes; }, [notes]);
+  useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
+
   // Sound effect generator using Web Audio API
   const playClickSound = (type: 'add' | 'sub' | 'win') => {
     try {
@@ -73,97 +101,113 @@ export default function QuickCountPage() {
       gain.connect(ctx.destination);
 
       if (type === 'add') {
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1); // A5
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
         osc.start();
         osc.stop(ctx.currentTime + 0.12);
       } else if (type === 'sub') {
-        osc.frequency.setValueAtTime(329.63, ctx.currentTime); // E4
+        osc.frequency.setValueAtTime(329.63, ctx.currentTime);
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
         osc.start();
         osc.stop(ctx.currentTime + 0.1);
       } else if (type === 'win') {
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-        osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.25); // C6
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.25);
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
         osc.start();
         osc.stop(ctx.currentTime + 0.3);
       }
-    } catch (e) {
-      // Audio not supported or blocked
-    }
+    } catch (e) {}
   };
 
-  const fetchQuickCount = async (silent = false) => {
+  const fetchQuickCount = useCallback(async (silent = false) => {
+    // Don't let polling overwrite state if user clicked recently (within 5 s)
+    if (silent && Date.now() - lastActionRef.current < 5000) return;
+
     if (!silent) setRefreshing(true);
     try {
       const res = await fetch(`/api/admin/quick-count?date=${date}`);
       const data = await res.json();
       if (res.ok && data.success) {
-        setCandidates(data.config.candidates || []);
-        setInvalidVotes(data.config.invalid_votes || 0);
+        // Only update candidates from server when not currently saving
+        // to avoid overwriting optimistic local increments
+        if (!isSavingRef.current) {
+          setCandidates(data.config.candidates || []);
+          setInvalidVotes(data.config.invalid_votes || 0);
+        }
         setNotes(data.config.notes || '');
         setIsLocked(Boolean(data.config.is_locked));
         setLastUpdated(data.config.updated_at);
         setStats(data.stats);
-      } else {
+      } else if (!silent) {
         toast.error(data.error || 'Gagal memuat data Quick Count');
       }
     } catch (e) {
-      toast.error('Gagal terhubung ke server');
+      if (!silent) toast.error('Gagal terhubung ke server');
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      if (!silent) setRefreshing(false);
     }
-  };
+  }, [date]);
 
   useEffect(() => {
     fetchQuickCount();
-  }, [date]);
+  }, [fetchQuickCount]);
 
-  // Periodic polling every 12 seconds
+  // Periodic polling every 15 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       fetchQuickCount(true);
-    }, 12000);
+    }, 15000);
     return () => clearInterval(interval);
-  }, [date]);
+  }, [fetchQuickCount]);
 
-  // Save changes to server
-  const saveQuickCountState = async (
-    newCandidates: QuickCountCandidate[],
-    newInvalid: number,
-    newNotes: string,
-    newLocked: boolean
-  ) => {
+  // ─── Core save function with mutex + queue ─────────────────────────
+  // Only one save runs at a time. If another save comes in while one
+  // is in progress, it is stored in saveQueueRef and executed after.
+  // This guarantees the server always receives the LATEST state and
+  // out-of-order responses are discarded via saveSeqRef.
+  // ──────────────────────────────────────────────────────────────────
+  const executeSave = useCallback(async (
+    cands: QuickCountCandidate[],
+    inv: number,
+    nts: string,
+    lck: boolean
+  ): Promise<boolean> => {
+    isSavingRef.current = true;
+    const mySeq = ++saveSeqRef.current; // capture sequence number for this call
+
     try {
       const res = await fetch('/api/admin/quick-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          candidates: newCandidates,
-          invalid_votes: newInvalid,
-          notes: newNotes,
-          is_locked: newLocked,
+          candidates: cands,
+          invalid_votes: inv,
+          notes: nts,
+          is_locked: lck,
         }),
       });
       const data = await res.json();
+
+      // Discard this response if a newer save already finished
+      if (mySeq < saveSeqRef.current) return true;
+
       if (res.ok && data.success) {
-        // Local recalculate stats
-        const totalValid = newCandidates.reduce((s, c) => s + (c.votes || 0), 0);
-        const totalBallots = totalValid + newInvalid;
-        const disc = totalBallots - stats.votedVotersCount;
+        // Update stats optimistically from what we just saved
+        const totalValid = cands.reduce((s, c) => s + (c.votes || 0), 0);
+        const totalBallots = totalValid + inv;
         setStats((prev) => ({
           ...prev,
           totalValidVotes: totalValid,
-          totalInvalidVotes: newInvalid,
+          totalInvalidVotes: inv,
           totalBallotsCounted: totalBallots,
-          discrepancy: disc,
-          isBalanced: disc === 0,
+          discrepancy: totalBallots - prev.votedVotersCount,
+          isBalanced: totalBallots === prev.votedVotersCount,
         }));
         return true;
       } else {
@@ -171,49 +215,87 @@ export default function QuickCountPage() {
         return false;
       }
     } catch (e) {
-      toast.error('Gagal memperbarui data');
+      if (mySeq >= saveSeqRef.current) toast.error('Gagal memperbarui data');
       return false;
-    }
-  };
+    } finally {
+      isSavingRef.current = false;
 
-  // Vote manipulation
-  const handleVoteChange = async (candidateId: string, delta: number) => {
-    if (isLocked) {
+      // Process queued save if any
+      const queued = saveQueueRef.current;
+      if (queued) {
+        saveQueueRef.current = null;
+        executeSave(queued.candidates, queued.invalid, queued.notes, queued.locked);
+      }
+    }
+  }, []);
+
+  const saveQuickCountState = useCallback((
+    newCandidates: QuickCountCandidate[],
+    newInvalid: number,
+    newNotes: string,
+    newLocked: boolean
+  ) => {
+    if (isSavingRef.current) {
+      // Queue the latest state; previous queue is overwritten (we only need latest)
+      saveQueueRef.current = { candidates: newCandidates, invalid: newInvalid, notes: newNotes, locked: newLocked };
+      return Promise.resolve(true);
+    }
+    return executeSave(newCandidates, newInvalid, newNotes, newLocked);
+  }, [executeSave]);
+
+  // ─── Vote manipulation (race-condition safe) ───────────────────────
+  // Uses functional setState so each click reads the PREVIOUS state,
+  // not a stale closure. The updated array is captured via a local ref
+  // and passed to save immediately.
+  // ──────────────────────────────────────────────────────────────────
+  const handleVoteChange = useCallback((candidateId: string, delta: number) => {
+    if (isLockedRef.current) {
       toast.error('Perhitungan suara sedang dikunci');
       return;
     }
-    const updated = candidates.map((c) => {
-      if (c.id === candidateId) {
-        const nextVote = Math.max(0, (c.votes || 0) + delta);
-        return { ...c, votes: nextVote };
-      }
-      return c;
+
+    lastActionRef.current = Date.now();
+    let captured: QuickCountCandidate[] = [];
+
+    setCandidates((prev) => {
+      captured = prev.map((c) =>
+        c.id === candidateId
+          ? { ...c, votes: Math.max(0, (c.votes || 0) + delta) }
+          : c
+      );
+      return captured;
     });
 
-    setCandidates(updated);
     playClickSound(delta > 0 ? 'add' : 'sub');
-    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
-  };
 
-  const handleInvalidChange = async (delta: number) => {
-    if (isLocked) {
+    // Schedule save after state flush (next microtask)
+    // captured is already set synchronously by the updater above
+    Promise.resolve().then(() => {
+      saveQuickCountState(captured, invalidRef.current, notesRef.current, isLockedRef.current);
+    });
+  }, [saveQuickCountState]);
+
+  const handleInvalidChange = useCallback((delta: number) => {
+    if (isLockedRef.current) {
       toast.error('Perhitungan suara sedang dikunci');
       return;
     }
-    const nextInvalid = Math.max(0, invalidVotes + delta);
+
+    lastActionRef.current = Date.now();
+    const nextInvalid = Math.max(0, invalidRef.current + delta);
     setInvalidVotes(nextInvalid);
     playClickSound(delta > 0 ? 'add' : 'sub');
-    await saveQuickCountState(candidates, nextInvalid, notes, isLocked);
-  };
+    saveQuickCountState(candidatesRef.current, nextInvalid, notesRef.current, isLockedRef.current);
+  }, [saveQuickCountState]);
 
-  const handleToggleLock = async () => {
-    const nextLocked = !isLocked;
+  const handleToggleLock = useCallback(async () => {
+    const nextLocked = !isLockedRef.current;
     setIsLocked(nextLocked);
-    const ok = await saveQuickCountState(candidates, invalidVotes, notes, nextLocked);
+    const ok = await saveQuickCountState(candidatesRef.current, invalidRef.current, notesRef.current, nextLocked);
     if (ok) {
       toast.success(nextLocked ? 'Perhitungan suara berhasil dikunci' : 'Kunci perhitungan suara dibuka');
     }
-  };
+  }, [saveQuickCountState]);
 
   const handleSaveNotes = async () => {
     setSavingNotes(true);
@@ -273,7 +355,7 @@ export default function QuickCountPage() {
 
     let updated: QuickCountCandidate[];
     if (editingCandidate) {
-      updated = candidates.map((c) =>
+      updated = candidatesRef.current.map((c) =>
         c.id === editingCandidate.id
           ? {
               ...c,
@@ -287,32 +369,32 @@ export default function QuickCountPage() {
     } else {
       const newPaslon: QuickCountCandidate = {
         id: `paslon-${Date.now()}`,
-        number: formNumber.trim() || String(candidates.length + 1).padStart(2, '0'),
+        number: formNumber.trim() || String(candidatesRef.current.length + 1).padStart(2, '0'),
         name: formName.trim(),
         tagline: formTagline.trim(),
         photo_url: formPhoto.trim() || undefined,
         votes: 0,
       };
-      updated = [...candidates, newPaslon];
+      updated = [...candidatesRef.current, newPaslon];
     }
 
     setCandidates(updated);
     setIsModalOpen(false);
-    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
+    await saveQuickCountState(updated, invalidRef.current, notesRef.current, isLockedRef.current);
     toast.success(editingCandidate ? 'Paslon berhasil diperbarui' : 'Paslon baru berhasil ditambahkan');
   };
 
   const handleDeleteCandidate = async (id: string, name: string) => {
-    if (isLocked) {
+    if (isLockedRef.current) {
       toast.error('Buka kunci terlebih dahulu untuk menghapus paslon');
       return;
     }
     if (!confirm(`Hapus ${name} dari daftar paslon? Suara yang sudah diinput akan terhapus.`)) {
       return;
     }
-    const updated = candidates.filter((c) => c.id !== id);
+    const updated = candidatesRef.current.filter((c) => c.id !== id);
     setCandidates(updated);
-    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
+    await saveQuickCountState(updated, invalidRef.current, notesRef.current, isLockedRef.current);
     toast.success('Paslon berhasil dihapus');
   };
 
@@ -320,10 +402,10 @@ export default function QuickCountPage() {
     if (!confirm('PERINGATAN: Apakah Anda yakin ingin mereset semua hitungan suara kembali ke 0? Tindakan ini tidak dapat dibatalkan.')) {
       return;
     }
-    const resetCandidates = candidates.map((c) => ({ ...c, votes: 0 }));
+    const resetCandidates = candidatesRef.current.map((c) => ({ ...c, votes: 0 }));
     setCandidates(resetCandidates);
     setInvalidVotes(0);
-    await saveQuickCountState(resetCandidates, 0, notes, isLocked);
+    await saveQuickCountState(resetCandidates, 0, notesRef.current, isLockedRef.current);
     toast.success('Seluruh hitungan suara berhasil direset ke 0');
   };
 
