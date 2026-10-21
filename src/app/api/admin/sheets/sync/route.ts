@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
     const extraTexts = landingData?.extra_texts;
     const dayResolution = resolveActiveDay(extraTexts, date);
     const days = dayResolution.days;
+    const day1Date = dayResolution.day1Date;
+    const day2Date = dayResolution.day2Date;
     const lecturers: string[] = extraTexts?.lecturers || [];
 
     // 3. Ambil seluruh data master mahasiswa aktif
