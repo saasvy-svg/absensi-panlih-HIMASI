@@ -17,6 +17,8 @@ import {
   RotateCcw, 
   Megaphone, 
   X,
+  XCircle,
+  UserX,
   ExternalLink,
   Loader2
 } from 'lucide-react';
@@ -28,13 +30,14 @@ export default function BilikSuaraPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [date, setDate] = useState(() => getWIBDate());
   const [search, setSearch] = useState('');
-  const [filterTab, setFilterTab] = useState<'all' | 'waiting' | 'voted' | 'absent'>('waiting');
+  const [filterTab, setFilterTab] = useState<'all' | 'waiting' | 'voted' | 'skipped' | 'absent'>('waiting');
   const [classFilter, setClassFilter] = useState('all');
 
   const [stats, setStats] = useState({
     totalDpt: 0,
     totalPresent: 0,
     votedCount: 0,
+    skippedCount: 0,
     waitingCount: 0,
     turnoutPercentage: 0,
   });
@@ -122,6 +125,7 @@ export default function BilikSuaraPage() {
         body: JSON.stringify({
           nim: student.nim,
           has_voted: newStatus,
+          is_skipped: false,
         }),
       });
 
@@ -130,7 +134,7 @@ export default function BilikSuaraPage() {
         if (newStatus) {
           toast.success(`🗳️ ${student.name} telah mencoblos!`);
         } else {
-          toast.info(`Status mencoblos ${student.name} dibatalkan.`);
+          toast.info(`Status antrean ${student.name} dikembalikan ke antrean.`);
         }
         if (callingStudent && callingStudent.nim === student.nim) {
           setCallingStudent(null);
@@ -146,12 +150,45 @@ export default function BilikSuaraPage() {
     }
   };
 
+  // Mark student as skipped (Tidak Mencoblos)
+  const handleSkipVote = async (student: any, reason?: string) => {
+    setTogglingNim(student.nim);
+    try {
+      const res = await fetch('/api/admin/voting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nim: student.nim,
+          has_voted: false,
+          is_skipped: true,
+          skip_reason: reason || 'Tidak hadir saat dipanggil ke bilik suara',
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.warning(`❌ ${student.name} ditandai TIDAK MENCOBLOS.`);
+        if (callingStudent && callingStudent.nim === student.nim) {
+          setCallingStudent(null);
+        }
+        await fetchQueue(true);
+      } else {
+        toast.error(data.error || 'Gagal menandai tidak mencoblos');
+      }
+    } catch (e: any) {
+      toast.error('Terjadi kesalahan jaringan');
+    } finally {
+      setTogglingNim(null);
+    }
+  };
+
   // Filtered List calculation
   const rawList = filterTab === 'absent' ? absentList : presentList;
   const filteredList = rawList.filter((item) => {
     // Tab filter for presentList
-    if (filterTab === 'waiting' && item.has_voted) return false;
+    if (filterTab === 'waiting' && (item.has_voted || item.is_skipped)) return false;
     if (filterTab === 'voted' && !item.has_voted) return false;
+    if (filterTab === 'skipped' && !item.is_skipped) return false;
 
     // Search filter
     if (search.trim()) {
@@ -215,7 +252,7 @@ export default function BilikSuaraPage() {
       </div>
 
       {/* METRIC CARDS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-2xs">
           <div className="flex items-center justify-between text-gray-500 mb-2">
             <span className="text-xs font-medium">Hadir di Lokasi</span>
@@ -225,7 +262,19 @@ export default function BilikSuaraPage() {
             <span className="text-2xl font-extrabold text-[#111827]">{stats.totalPresent}</span>
             <span className="text-xs text-gray-400">/ {stats.totalDpt} DPT</span>
           </div>
-          <p className="text-[11px] text-gray-400 mt-1">Pemilih yang berhak mencoblos</p>
+          <p className="text-[11px] text-gray-400 mt-1">Presensi hadir tercatat</p>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-amber-200/80 bg-amber-50/20 shadow-2xs">
+          <div className="flex items-center justify-between text-amber-800 mb-2">
+            <span className="text-xs font-bold">Menunggu Giliran</span>
+            <Clock size={16} className="text-amber-600" />
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-amber-700">{stats.waitingCount}</span>
+            <span className="text-xs text-amber-800">Antrean Aktif</span>
+          </div>
+          <p className="text-[11px] text-amber-600/80 mt-1">Siap dipanggil bilik suara</p>
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-emerald-200/80 bg-emerald-50/20 shadow-2xs">
@@ -239,22 +288,22 @@ export default function BilikSuaraPage() {
               {stats.turnoutPercentage}%
             </span>
           </div>
-          <p className="text-[11px] text-emerald-600/80 mt-1">Surat suara telah digunakan</p>
+          <p className="text-[11px] text-emerald-600/80 mt-1">Kertas suara telah digunakan</p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-amber-200/80 bg-amber-50/20 shadow-2xs">
-          <div className="flex items-center justify-between text-amber-800 mb-2">
-            <span className="text-xs font-bold">Menunggu Giliran</span>
-            <Clock size={16} className="text-amber-600" />
+        <div className="bg-white p-4 rounded-2xl border border-rose-200/80 bg-rose-50/20 shadow-2xs">
+          <div className="flex items-center justify-between text-rose-800 mb-2">
+            <span className="text-xs font-bold">Tidak Mencoblos</span>
+            <UserX size={16} className="text-rose-600" />
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-amber-700">{stats.waitingCount}</span>
-            <span className="text-xs text-amber-800">Antrean Aktif</span>
+            <span className="text-2xl font-extrabold text-rose-700">{stats.skippedCount || 0}</span>
+            <span className="text-xs text-rose-600 font-semibold">Lewat</span>
           </div>
-          <p className="text-[11px] text-amber-600/80 mt-1">Siap dipanggil ke bilik suara</p>
+          <p className="text-[11px] text-rose-600/80 mt-1">Hadir tapi tidak mencoblos</p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-2xs">
+        <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-2xs col-span-2 md:col-span-1">
           <div className="flex items-center justify-between text-gray-500 mb-2">
             <span className="text-xs font-medium">Belum Hadir</span>
             <AlertCircle size={16} className="text-gray-400" />
@@ -263,7 +312,7 @@ export default function BilikSuaraPage() {
             <span className="text-2xl font-extrabold text-gray-600">{stats.totalDpt - stats.totalPresent}</span>
             <span className="text-xs text-gray-400">Mahasiswa / Dosen</span>
           </div>
-          <p className="text-[11px] text-gray-400 mt-1">Belum melakukan presensi hari ini</p>
+          <p className="text-[11px] text-gray-400 mt-1">Belum presensi hari ini</p>
         </div>
       </div>
 
@@ -290,24 +339,35 @@ export default function BilikSuaraPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={() => handleCallVoter(callingStudent)}
-                className="py-3 px-4 rounded-xl border border-purple-300 text-purple-700 font-bold text-xs hover:bg-purple-50 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-3 px-3 rounded-xl border border-purple-300 text-purple-700 font-bold text-xs hover:bg-purple-50 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <Volume2 size={16} />
-                <span>Ulangi Panggilan</span>
+                <Volume2 size={15} />
+                <span>Panggil Lagi</span>
               </button>
 
               <button
                 type="button"
                 disabled={togglingNim === callingStudent.nim}
                 onClick={() => handleToggleVote(callingStudent, true)}
-                className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-3 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <Check size={16} />
+                <Check size={15} />
                 <span>Sudah Mencoblos</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={togglingNim === callingStudent.nim}
+                onClick={() => handleSkipVote(callingStudent)}
+                className="py-3 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                title="Tandai peserta tidak mencoblos / tidak maju"
+              >
+                <UserX size={15} />
+                <span>Tidak Mencoblos</span>
               </button>
             </div>
 
@@ -347,6 +407,17 @@ export default function BilikSuaraPage() {
               }`}
             >
               Sudah Mencoblos ({stats.votedCount})
+            </button>
+
+            <button
+              onClick={() => setFilterTab('skipped')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                filterTab === 'skipped'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Tidak Mencoblos ({stats.skippedCount || 0})
             </button>
 
             <button
@@ -433,12 +504,13 @@ export default function BilikSuaraPage() {
               <tbody className="divide-y divide-black/5">
                 {filteredList.map((item, idx) => {
                   const isVoted = Boolean(item.has_voted);
+                  const isSkipped = Boolean(item.is_skipped);
                   const isAbsent = filterTab === 'absent';
                   return (
                     <tr
                       key={item.id || item.nim}
                       className={`hover:bg-blue-50/30 transition-colors ${
-                        isVoted ? 'bg-emerald-50/10' : ''
+                        isVoted ? 'bg-emerald-50/10' : isSkipped ? 'bg-rose-50/15' : ''
                       }`}
                     >
                       <td className="py-3 px-4 text-center font-bold text-gray-500">
@@ -475,6 +547,14 @@ export default function BilikSuaraPage() {
                           <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-gray-100 text-gray-500 border border-gray-200">
                             Belum Hadir
                           </span>
+                        ) : isSkipped ? (
+                          <div className="inline-flex flex-col items-center">
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 inline-flex items-center gap-1">
+                              <XCircle size={12} />
+                              Tidak Mencoblos
+                            </span>
+                            <span className="text-[9px] text-rose-600 font-semibold mt-0.5">Dilewati / Tidak Hadir</span>
+                          </div>
                         ) : isVoted ? (
                           <div className="inline-flex flex-col items-center">
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
@@ -496,41 +576,73 @@ export default function BilikSuaraPage() {
                       <td className="py-3 px-4 text-right">
                         {isAbsent ? (
                           <span className="text-[11px] text-gray-400 italic">Menunggu Presensi</span>
+                        ) : isSkipped ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={togglingNim === item.nim}
+                              onClick={() => handleToggleVote(item, true)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shadow-2xs transition-all cursor-pointer"
+                              title="Tandai mencoblos jika siswa akhirnya maju"
+                            >
+                              <Check size={12} />
+                              <span>Nyoblos</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={togglingNim === item.nim}
+                              onClick={() => handleToggleVote(item, false)}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg font-semibold text-[10px] border border-gray-200 transition-all cursor-pointer"
+                              title="Kembalikan ke antrean tunggu"
+                            >
+                              <RotateCcw size={10} />
+                              <span>Reset</span>
+                            </button>
+                          </div>
+                        ) : isVoted ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={togglingNim === item.nim}
+                              onClick={() => handleToggleVote(item, false)}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-rose-50 hover:text-rose-700 text-gray-500 rounded-lg font-semibold text-[10px] border border-gray-200 transition-all cursor-pointer"
+                              title="Batalkan status sudah mencoblos jika keliru"
+                            >
+                              <RotateCcw size={10} />
+                              <span>Batal</span>
+                            </button>
+                          </div>
                         ) : (
                           <div className="flex items-center justify-end gap-1.5">
-                            {!isVoted ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCallVoter(item)}
-                                  className="p-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-200 transition-all cursor-pointer"
-                                  title="Panggil nama siswa dengan suara ke bilik suara"
-                                >
-                                  <Volume2 size={14} />
-                                </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCallVoter(item)}
+                              className="p-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-200 transition-all cursor-pointer"
+                              title="Panggil nama siswa dengan suara ke bilik suara"
+                            >
+                              <Volume2 size={14} />
+                            </button>
 
-                                <button
-                                  type="button"
-                                  disabled={togglingNim === item.nim}
-                                  onClick={() => handleToggleVote(item, true)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shadow-2xs transition-all cursor-pointer"
-                                >
-                                  <Check size={12} />
-                                  <span>Sudah Nyoblos</span>
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled={togglingNim === item.nim}
-                                onClick={() => handleToggleVote(item, false)}
-                                className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-rose-50 hover:text-rose-700 text-gray-500 rounded-lg font-semibold text-[10px] border border-gray-200 transition-all cursor-pointer"
-                                title="Batalkan status sudah mencoblos jika keliru"
-                              >
-                                <RotateCcw size={10} />
-                                <span>Batal</span>
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              disabled={togglingNim === item.nim}
+                              onClick={() => handleToggleVote(item, true)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shadow-2xs transition-all cursor-pointer"
+                            >
+                              <Check size={12} />
+                              <span>Sudah Nyoblos</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={togglingNim === item.nim}
+                              onClick={() => handleSkipVote(item)}
+                              className="inline-flex items-center gap-1 px-2 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg font-bold text-[11px] transition-all cursor-pointer"
+                              title="Tandai peserta tidak mencoblos (dilewati / tidak maju)"
+                            >
+                              <UserX size={12} />
+                              <span className="hidden xl:inline">Tidak Nyoblos</span>
+                            </button>
                           </div>
                         )}
                       </td>

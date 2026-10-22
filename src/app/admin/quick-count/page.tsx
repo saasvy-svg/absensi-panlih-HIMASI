@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { 
   BarChart3, 
@@ -44,6 +44,16 @@ export default function QuickCountPage() {
   const [notes, setNotes] = useState('');
   const [isLocked, setIsLocked] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  // Refs to prevent race conditions on fast spam-clicks and prevent polling overwrites
+  const latestCandidatesRef = useRef<QuickCountCandidate[]>([]);
+  const latestInvalidRef = useRef<number>(0);
+  const latestNotesRef = useRef<string>('');
+  const latestLockedRef = useRef<boolean>(false);
+  const lastActionTimeRef = useRef<number>(0);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingRef = useRef<boolean>(false);
+  const pendingSaveRef = useRef<boolean>(false);
 
   // Online Voting Stats
   const [onlineStats, setOnlineStats] = useState<{
@@ -127,25 +137,42 @@ export default function QuickCountPage() {
   };
 
   const fetchQuickCount = async (silent = false) => {
+    // Abaikan polling background jika admin sedang aktif klik dalam 4 detik terakhir
+    if (silent && Date.now() - lastActionTimeRef.current < 4000) {
+      return;
+    }
     if (!silent) setRefreshing(true);
     try {
       const res = await fetch(`/api/admin/quick-count?date=${date}`);
       const data = await res.json();
       if (res.ok && data.success) {
-        setCandidates(data.config.candidates || []);
-        setInvalidVotes(data.config.invalid_votes || 0);
-        setNotes(data.config.notes || '');
-        setIsLocked(Boolean(data.config.is_locked));
+        if (silent && Date.now() - lastActionTimeRef.current < 4000) {
+          return;
+        }
+        const serverCandidates = data.config.candidates || [];
+        const serverInvalid = data.config.invalid_votes || 0;
+        const serverNotes = data.config.notes || '';
+        const serverLocked = Boolean(data.config.is_locked);
+
+        latestCandidatesRef.current = serverCandidates;
+        latestInvalidRef.current = serverInvalid;
+        latestNotesRef.current = serverNotes;
+        latestLockedRef.current = serverLocked;
+
+        setCandidates(serverCandidates);
+        setInvalidVotes(serverInvalid);
+        setNotes(serverNotes);
+        setIsLocked(serverLocked);
         setLastUpdated(data.config.updated_at);
         setStats(data.stats);
         if (data.onlineStats) {
           setOnlineStats(data.onlineStats);
         }
       } else {
-        toast.error(data.error || 'Gagal memuat data Quick Count');
+        if (!silent) toast.error(data.error || 'Gagal memuat data Quick Count');
       }
     } catch (e) {
-      toast.error('Gagal terhubung ke server');
+      if (!silent) toast.error('Gagal terhubung ke server');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -251,38 +278,38 @@ export default function QuickCountPage() {
     return () => clearInterval(interval);
   }, [date]);
 
-  // Save changes to server
-  const saveQuickCountState = async (
-    newCandidates: QuickCountCandidate[],
-    newInvalid: number,
-    newNotes: string,
-    newLocked: boolean
-  ) => {
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Save changes to server with concurrency lock and queueing
+  const executeSave = async (): Promise<boolean> => {
+    if (isSavingRef.current) {
+      pendingSaveRef.current = true;
+      return true;
+    }
+    isSavingRef.current = true;
+    pendingSaveRef.current = false;
+
+    const payload = {
+      candidates: latestCandidatesRef.current,
+      invalid_votes: latestInvalidRef.current,
+      notes: latestNotesRef.current,
+      is_locked: latestLockedRef.current,
+    };
+
     try {
       const res = await fetch('/api/admin/quick-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          candidates: newCandidates,
-          invalid_votes: newInvalid,
-          notes: newNotes,
-          is_locked: newLocked,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        // Local recalculate stats
-        const totalValid = newCandidates.reduce((s, c) => s + (c.votes || 0), 0);
-        const totalBallots = totalValid + newInvalid;
-        const disc = totalBallots - stats.votedVotersCount;
-        setStats((prev) => ({
-          ...prev,
-          totalValidVotes: totalValid,
-          totalInvalidVotes: newInvalid,
-          totalBallotsCounted: totalBallots,
-          discrepancy: disc,
-          isBalanced: disc === 0,
-        }));
         return true;
       } else {
         toast.error(data.error || 'Gagal menyimpan perubahan');
@@ -291,16 +318,60 @@ export default function QuickCountPage() {
     } catch (e) {
       toast.error('Gagal memperbarui data');
       return false;
+    } finally {
+      isSavingRef.current = false;
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        executeSave();
+      }
     }
   };
 
-  // Vote manipulation
-  const handleVoteChange = async (candidateId: string, delta: number) => {
-    if (isLocked) {
+  const scheduleDebouncedSave = () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      executeSave();
+    }, 250);
+  };
+
+  const saveQuickCountState = async (
+    newCandidates: QuickCountCandidate[],
+    newInvalid: number,
+    newNotes: string,
+    newLocked: boolean
+  ) => {
+    latestCandidatesRef.current = newCandidates;
+    latestInvalidRef.current = newInvalid;
+    latestNotesRef.current = newNotes;
+    latestLockedRef.current = newLocked;
+    lastActionTimeRef.current = Date.now();
+
+    // Local recalculate stats
+    const totalValid = newCandidates.reduce((s, c) => s + (c.votes || 0), 0);
+    const totalBallots = totalValid + newInvalid;
+    const disc = totalBallots - stats.votedVotersCount;
+    setStats((prev) => ({
+      ...prev,
+      totalValidVotes: totalValid,
+      totalInvalidVotes: newInvalid,
+      totalBallotsCounted: totalBallots,
+      discrepancy: disc,
+      isBalanced: disc === 0,
+    }));
+
+    return await executeSave();
+  };
+
+  // Vote manipulation with debouncing & closure-race protection
+  const handleVoteChange = (candidateId: string, delta: number) => {
+    if (latestLockedRef.current) {
       toast.error('Perhitungan suara sedang dikunci');
       return;
     }
-    const updated = candidates.map((c) => {
+    const current = latestCandidatesRef.current;
+    const updated = current.map((c) => {
       if (c.id === candidateId) {
         const nextVote = Math.max(0, (c.votes || 0) + delta);
         return { ...c, votes: nextVote };
@@ -308,26 +379,59 @@ export default function QuickCountPage() {
       return c;
     });
 
+    latestCandidatesRef.current = updated;
     setCandidates(updated);
     playClickSound(delta > 0 ? 'add' : 'sub');
-    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
+    lastActionTimeRef.current = Date.now();
+
+    // Instant local recalculate stats
+    const totalValid = updated.reduce((s, c) => s + (c.votes || 0), 0);
+    const totalBallots = totalValid + latestInvalidRef.current;
+    const disc = totalBallots - stats.votedVotersCount;
+    setStats((prev) => ({
+      ...prev,
+      totalValidVotes: totalValid,
+      totalInvalidVotes: latestInvalidRef.current,
+      totalBallotsCounted: totalBallots,
+      discrepancy: disc,
+      isBalanced: disc === 0,
+    }));
+
+    scheduleDebouncedSave();
   };
 
-  const handleInvalidChange = async (delta: number) => {
-    if (isLocked) {
+  const handleInvalidChange = (delta: number) => {
+    if (latestLockedRef.current) {
       toast.error('Perhitungan suara sedang dikunci');
       return;
     }
-    const nextInvalid = Math.max(0, invalidVotes + delta);
+    const nextInvalid = Math.max(0, latestInvalidRef.current + delta);
+    latestInvalidRef.current = nextInvalid;
     setInvalidVotes(nextInvalid);
     playClickSound(delta > 0 ? 'add' : 'sub');
-    await saveQuickCountState(candidates, nextInvalid, notes, isLocked);
+    lastActionTimeRef.current = Date.now();
+
+    // Instant local recalculate stats
+    const totalValid = latestCandidatesRef.current.reduce((s, c) => s + (c.votes || 0), 0);
+    const totalBallots = totalValid + nextInvalid;
+    const disc = totalBallots - stats.votedVotersCount;
+    setStats((prev) => ({
+      ...prev,
+      totalValidVotes: totalValid,
+      totalInvalidVotes: nextInvalid,
+      totalBallotsCounted: totalBallots,
+      discrepancy: disc,
+      isBalanced: disc === 0,
+    }));
+
+    scheduleDebouncedSave();
   };
 
   const handleToggleLock = async () => {
-    const nextLocked = !isLocked;
+    const nextLocked = !latestLockedRef.current;
+    latestLockedRef.current = nextLocked;
     setIsLocked(nextLocked);
-    const ok = await saveQuickCountState(candidates, invalidVotes, notes, nextLocked);
+    const ok = await saveQuickCountState(latestCandidatesRef.current, latestInvalidRef.current, latestNotesRef.current, nextLocked);
     if (ok) {
       toast.success(nextLocked ? 'Perhitungan suara berhasil dikunci' : 'Kunci perhitungan suara dibuka');
     }
@@ -335,7 +439,8 @@ export default function QuickCountPage() {
 
   const handleSaveNotes = async () => {
     setSavingNotes(true);
-    const ok = await saveQuickCountState(candidates, invalidVotes, notes, isLocked);
+    latestNotesRef.current = notes;
+    const ok = await saveQuickCountState(latestCandidatesRef.current, latestInvalidRef.current, notes, latestLockedRef.current);
     setSavingNotes(false);
     if (ok) {
       toast.success('Catatan & Berita Acara berhasil disimpan');
@@ -871,11 +976,11 @@ export default function QuickCountPage() {
 
                   {/* Photo if available */}
                   {candidate.photo_url && (
-                    <div className="mt-3 overflow-hidden rounded-xl h-36 bg-slate-950 border border-slate-800">
+                    <div className="mt-3 overflow-hidden rounded-xl h-48 sm:h-56 bg-slate-950/80 border border-slate-800 flex items-center justify-center p-1.5 shadow-inner">
                       <img
                         src={candidate.photo_url}
                         alt={candidate.name}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-contain"
                       />
                     </div>
                   )}

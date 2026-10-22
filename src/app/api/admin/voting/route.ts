@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     const extraTexts = landingData?.extra_texts || {};
-    const votingRecords: Record<string, { has_voted: boolean; voted_at?: string; notes?: string }> =
+    const votingRecords: Record<string, { has_voted: boolean; voted_at?: string; notes?: string; is_skipped?: boolean; skipped_at?: string; skip_reason?: string }> =
       extraTexts.voting_records || {};
     const onlineMembers: Record<string, 'online' | 'offline'> = extraTexts.online_members || {};
     const lecturers: string[] = extraTexts.lecturers || [];
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     // Diurutkan berdasarkan jam presensi paling awal (check_in_time ASC)
     const presentList = (attendances || []).map((att, idx) => {
       const nimKey = String(att.nim || '').trim().toUpperCase();
-      const voteInfo = votingRecords[nimKey] || { has_voted: false, voted_at: null };
+      const voteInfo = votingRecords[nimKey] || { has_voted: false, voted_at: null, is_skipped: false };
       const attType = studentTypeMap.get(nimKey) || onlineMembers[nimKey] || onlineMembers[String(att.name || '').trim().toUpperCase()] || 'offline';
 
       return {
@@ -77,6 +77,9 @@ export async function GET(request: NextRequest) {
         attendance_type: attType,
         has_voted: Boolean(voteInfo.has_voted),
         voted_at: voteInfo.voted_at || null,
+        is_skipped: Boolean(voteInfo.is_skipped),
+        skipped_at: voteInfo.skipped_at || null,
+        skip_reason: voteInfo.skip_reason || null,
         notes: voteInfo.notes || att.notes || null,
       };
     });
@@ -93,6 +96,7 @@ export async function GET(request: NextRequest) {
           class_name: normalizeAngkatan(s.class_name),
           attendance_type: studentTypeMap.get(nimKey) || 'offline',
           has_voted: false,
+          is_skipped: false,
         });
       }
     });
@@ -111,6 +115,7 @@ export async function GET(request: NextRequest) {
           class_name: 'Dosen',
           attendance_type: docType,
           has_voted: false,
+          is_skipped: false,
         });
       }
     });
@@ -119,7 +124,8 @@ export async function GET(request: NextRequest) {
     const totalDpt = (allStudents?.length || 0) + lecturers.length;
     const totalPresent = presentList.length;
     const votedCount = presentList.filter((p) => p.has_voted).length;
-    const waitingCount = totalPresent - votedCount;
+    const skippedCount = presentList.filter((p) => p.is_skipped).length;
+    const waitingCount = totalPresent - votedCount - skippedCount;
     const turnoutPercentage = totalPresent > 0 ? Math.round((votedCount / totalPresent) * 100) : 0;
 
     return NextResponse.json({
@@ -129,6 +135,7 @@ export async function GET(request: NextRequest) {
         totalDpt,
         totalPresent,
         votedCount,
+        skippedCount,
         waitingCount,
         turnoutPercentage,
       },
@@ -144,7 +151,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { nim, has_voted, notes } = body;
+    const { nim, has_voted, is_skipped, notes, skip_reason } = body;
 
     if (!nim) {
       return NextResponse.json({ error: 'NIM wajib disertakan' }, { status: 400 });
@@ -168,16 +175,30 @@ export async function POST(request: NextRequest) {
 
     const nowWib = getWIBLocaleString();
 
-    if (has_voted) {
+    let responseMessage = '';
+    if (is_skipped) {
+      votingRecords[nimKey] = {
+        has_voted: false,
+        is_skipped: true,
+        skipped_at: nowWib,
+        skip_reason: skip_reason || 'Tidak maju saat dipanggil / meninggalkan bilik suara',
+        notes: notes || null,
+      };
+      await removeStudentOnlineVote(nimKey);
+      responseMessage = `Pemilih ${nimKey} berhasil ditandai TIDAK MENCOBLOS (Dilewati). ❌`;
+    } else if (has_voted) {
       votingRecords[nimKey] = {
         has_voted: true,
+        is_skipped: false,
         voted_at: nowWib,
         notes: notes || null,
       };
+      responseMessage = `Pemilih ${nimKey} berhasil ditandai SUDAH MENCOBLOS! 🗳️`;
     } else {
-      // Un-vote / Undo (hapus juga dari online_votes jika ada untuk keperluan testing)
+      // Un-vote / Undo (kembalikan ke antrean tunggu biasa)
       delete votingRecords[nimKey];
       await removeStudentOnlineVote(nimKey);
+      responseMessage = `Status antrean pemilih ${nimKey} berhasil direset ke status Menunggu Giliran.`;
     }
 
     const updatedExtra = {
@@ -202,10 +223,10 @@ export async function POST(request: NextRequest) {
       success: true,
       nim: nimKey,
       has_voted: Boolean(has_voted),
+      is_skipped: Boolean(is_skipped),
       voted_at: has_voted ? nowWib : null,
-      message: has_voted
-        ? `Pemilih ${nimKey} berhasil ditandai SUDAH MENCOBLOS! 🗳️`
-        : `Status mencoblos untuk ${nimKey} berhasil dibatalkan.`,
+      skipped_at: is_skipped ? nowWib : null,
+      message: responseMessage,
     });
   } catch (error: any) {
     console.error('Voting toggle API error:', error);
