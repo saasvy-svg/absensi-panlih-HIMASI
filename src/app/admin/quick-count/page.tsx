@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { 
   BarChart3, 
@@ -20,8 +20,13 @@ import {
   RotateCcw, 
   Trash2, 
   Edit3, 
+  ExternalLink,
+  ChevronRight,
   TrendingUp,
-  Loader2
+  Sparkles,
+  Loader2,
+  Globe,
+  Check
 } from 'lucide-react';
 import { getWIBDate } from '@/lib/utils';
 import { QuickCountCandidate } from '@/types/database';
@@ -39,6 +44,32 @@ export default function QuickCountPage() {
   const [notes, setNotes] = useState('');
   const [isLocked, setIsLocked] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  // Online Voting Stats
+  const [onlineStats, setOnlineStats] = useState<{
+    totalOnlineVoters: number;
+    totalOnlineStudents: number;
+    totalOnlineLecturers: number;
+    onlineAttended: number;
+    onlineVoted: number;
+    onlineTurnoutPct: number;
+    candidateTallies: Record<string, { number: string; name: string; votes: number }>;
+    golputCount: number;
+    totalOnlineVotesCast: number;
+    isMerged: boolean;
+  }>({
+    totalOnlineVoters: 0,
+    totalOnlineStudents: 0,
+    totalOnlineLecturers: 0,
+    onlineAttended: 0,
+    onlineVoted: 0,
+    onlineTurnoutPct: 0,
+    candidateTallies: {},
+    golputCount: 0,
+    totalOnlineVotesCast: 0,
+    isMerged: false,
+  });
+  const [mergingOnline, setMergingOnline] = useState(false);
 
   // Stats from server
   const [stats, setStats] = useState({
@@ -60,37 +91,6 @@ export default function QuickCountPage() {
   const [formTagline, setFormTagline] = useState('');
   const [formPhoto, setFormPhoto] = useState('');
 
-  // ───────────────────────────────────────────────────────────────────
-  // RACE CONDITION PREVENTION REFS
-  // 1. candidatesRef  — canonical source of truth that is ALWAYS latest
-  // 2. invalidRef     — same for invalid votes
-  // 3. notesRef       — same for notes
-  // 4. isLockedRef    — same for lock
-  // 5. saveQueueRef   — queued state waiting to be saved once current save finishes
-  // 6. isSavingRef    — mutex: only one in-flight save at a time
-  // 7. lastActionRef  — timestamp of last user click; polling skips if < 5 s ago
-  // 8. saveSeqRef     — monotonically increasing counter to discard stale responses
-  // ───────────────────────────────────────────────────────────────────
-  const candidatesRef = useRef<QuickCountCandidate[]>([]);
-  const invalidRef = useRef(0);
-  const notesRef = useRef('');
-  const isLockedRef = useRef(false);
-  const saveQueueRef = useRef<{
-    candidates: QuickCountCandidate[];
-    invalid: number;
-    notes: string;
-    locked: boolean;
-  } | null>(null);
-  const isSavingRef = useRef(false);
-  const lastActionRef = useRef(0);
-  const saveSeqRef = useRef(0);
-
-  // Keep refs in sync with state
-  useEffect(() => { candidatesRef.current = candidates; }, [candidates]);
-  useEffect(() => { invalidRef.current = invalidVotes; }, [invalidVotes]);
-  useEffect(() => { notesRef.current = notes; }, [notes]);
-  useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
-
   // Sound effect generator using Web Audio API
   const playClickSound = (type: 'add' | 'sub' | 'win') => {
     try {
@@ -101,113 +101,160 @@ export default function QuickCountPage() {
       gain.connect(ctx.destination);
 
       if (type === 'add') {
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1); // A5
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
         osc.start();
         osc.stop(ctx.currentTime + 0.12);
       } else if (type === 'sub') {
-        osc.frequency.setValueAtTime(329.63, ctx.currentTime);
+        osc.frequency.setValueAtTime(329.63, ctx.currentTime); // E4
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
         osc.start();
         osc.stop(ctx.currentTime + 0.1);
       } else if (type === 'win') {
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.25);
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+        osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.25); // C6
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
         osc.start();
         osc.stop(ctx.currentTime + 0.3);
       }
-    } catch (e) {}
+    } catch (e) {
+      // Audio not supported or blocked
+    }
   };
 
-  const fetchQuickCount = useCallback(async (silent = false) => {
-    // Don't let polling overwrite state if user clicked recently (within 5 s)
-    if (silent && Date.now() - lastActionRef.current < 5000) return;
-
+  const fetchQuickCount = async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
       const res = await fetch(`/api/admin/quick-count?date=${date}`);
       const data = await res.json();
       if (res.ok && data.success) {
-        // Only update candidates from server when not currently saving
-        // to avoid overwriting optimistic local increments
-        if (!isSavingRef.current) {
-          setCandidates(data.config.candidates || []);
-          setInvalidVotes(data.config.invalid_votes || 0);
-        }
+        setCandidates(data.config.candidates || []);
+        setInvalidVotes(data.config.invalid_votes || 0);
         setNotes(data.config.notes || '');
         setIsLocked(Boolean(data.config.is_locked));
         setLastUpdated(data.config.updated_at);
         setStats(data.stats);
-      } else if (!silent) {
+        if (data.onlineStats) {
+          setOnlineStats(data.onlineStats);
+        }
+      } else {
         toast.error(data.error || 'Gagal memuat data Quick Count');
       }
     } catch (e) {
-      if (!silent) toast.error('Gagal terhubung ke server');
+      toast.error('Gagal terhubung ke server');
     } finally {
       setLoading(false);
-      if (!silent) setRefreshing(false);
+      setRefreshing(false);
     }
-  }, [date]);
+  };
+
+  const handleMergeOnlineVotes = async () => {
+    if (isLocked) {
+      toast.error('Perhitungan suara sedang dikunci');
+      return;
+    }
+    if (!confirm(`Tambahkan ${onlineStats.totalOnlineVotesCast} perolehan suara online ke dalam papan hitungan paslon Quick Count?`)) {
+      return;
+    }
+
+    setMergingOnline(true);
+    try {
+      const res = await fetch('/api/admin/quick-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'merge_online_votes' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message || 'Suara online berhasil digabungkan!');
+        fetchQuickCount(false);
+      } else {
+        toast.error(data.error || 'Gagal menambahkan suara online');
+      }
+    } catch (e) {
+      toast.error('Gagal terhubung ke server');
+    } finally {
+      setMergingOnline(false);
+    }
+  };
+
+  const handleUnmergeOnlineVotes = async () => {
+    if (isLocked) {
+      toast.error('Perhitungan suara sedang dikunci');
+      return;
+    }
+    if (!confirm('Tarik kembali / batalkan penambahan suara online dari Quick Count?')) {
+      return;
+    }
+
+    setMergingOnline(true);
+    try {
+      const res = await fetch('/api/admin/quick-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unmerge_online_votes' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message || 'Suara online ditarik kembali!');
+        fetchQuickCount(false);
+      } else {
+        toast.error(data.error || 'Gagal membatalkan suara online');
+      }
+    } catch (e) {
+      toast.error('Gagal terhubung ke server');
+    } finally {
+      setMergingOnline(false);
+    }
+  };
 
   useEffect(() => {
     fetchQuickCount();
-  }, [fetchQuickCount]);
+  }, [date]);
 
-  // Periodic polling every 15 seconds
+  // Periodic polling every 12 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       fetchQuickCount(true);
-    }, 15000);
+    }, 12000);
     return () => clearInterval(interval);
-  }, [fetchQuickCount]);
+  }, [date]);
 
-  // ─── Core save function with mutex + queue ─────────────────────────
-  // Only one save runs at a time. If another save comes in while one
-  // is in progress, it is stored in saveQueueRef and executed after.
-  // This guarantees the server always receives the LATEST state and
-  // out-of-order responses are discarded via saveSeqRef.
-  // ──────────────────────────────────────────────────────────────────
-  const executeSave = useCallback(async (
-    cands: QuickCountCandidate[],
-    inv: number,
-    nts: string,
-    lck: boolean
-  ): Promise<boolean> => {
-    isSavingRef.current = true;
-    const mySeq = ++saveSeqRef.current; // capture sequence number for this call
-
+  // Save changes to server
+  const saveQuickCountState = async (
+    newCandidates: QuickCountCandidate[],
+    newInvalid: number,
+    newNotes: string,
+    newLocked: boolean
+  ) => {
     try {
       const res = await fetch('/api/admin/quick-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          candidates: cands,
-          invalid_votes: inv,
-          notes: nts,
-          is_locked: lck,
+          candidates: newCandidates,
+          invalid_votes: newInvalid,
+          notes: newNotes,
+          is_locked: newLocked,
         }),
       });
       const data = await res.json();
-
-      // Discard this response if a newer save already finished
-      if (mySeq < saveSeqRef.current) return true;
-
       if (res.ok && data.success) {
-        // Update stats optimistically from what we just saved
-        const totalValid = cands.reduce((s, c) => s + (c.votes || 0), 0);
-        const totalBallots = totalValid + inv;
+        // Local recalculate stats
+        const totalValid = newCandidates.reduce((s, c) => s + (c.votes || 0), 0);
+        const totalBallots = totalValid + newInvalid;
+        const disc = totalBallots - stats.votedVotersCount;
         setStats((prev) => ({
           ...prev,
           totalValidVotes: totalValid,
-          totalInvalidVotes: inv,
+          totalInvalidVotes: newInvalid,
           totalBallotsCounted: totalBallots,
-          discrepancy: totalBallots - prev.votedVotersCount,
-          isBalanced: totalBallots === prev.votedVotersCount,
+          discrepancy: disc,
+          isBalanced: disc === 0,
         }));
         return true;
       } else {
@@ -215,87 +262,49 @@ export default function QuickCountPage() {
         return false;
       }
     } catch (e) {
-      if (mySeq >= saveSeqRef.current) toast.error('Gagal memperbarui data');
+      toast.error('Gagal memperbarui data');
       return false;
-    } finally {
-      isSavingRef.current = false;
+    }
+  };
 
-      // Process queued save if any
-      const queued = saveQueueRef.current;
-      if (queued) {
-        saveQueueRef.current = null;
-        executeSave(queued.candidates, queued.invalid, queued.notes, queued.locked);
+  // Vote manipulation
+  const handleVoteChange = async (candidateId: string, delta: number) => {
+    if (isLocked) {
+      toast.error('Perhitungan suara sedang dikunci');
+      return;
+    }
+    const updated = candidates.map((c) => {
+      if (c.id === candidateId) {
+        const nextVote = Math.max(0, (c.votes || 0) + delta);
+        return { ...c, votes: nextVote };
       }
-    }
-  }, []);
-
-  const saveQuickCountState = useCallback((
-    newCandidates: QuickCountCandidate[],
-    newInvalid: number,
-    newNotes: string,
-    newLocked: boolean
-  ) => {
-    if (isSavingRef.current) {
-      // Queue the latest state; previous queue is overwritten (we only need latest)
-      saveQueueRef.current = { candidates: newCandidates, invalid: newInvalid, notes: newNotes, locked: newLocked };
-      return Promise.resolve(true);
-    }
-    return executeSave(newCandidates, newInvalid, newNotes, newLocked);
-  }, [executeSave]);
-
-  // ─── Vote manipulation (race-condition safe) ───────────────────────
-  // Uses functional setState so each click reads the PREVIOUS state,
-  // not a stale closure. The updated array is captured via a local ref
-  // and passed to save immediately.
-  // ──────────────────────────────────────────────────────────────────
-  const handleVoteChange = useCallback((candidateId: string, delta: number) => {
-    if (isLockedRef.current) {
-      toast.error('Perhitungan suara sedang dikunci');
-      return;
-    }
-
-    lastActionRef.current = Date.now();
-    let captured: QuickCountCandidate[] = [];
-
-    setCandidates((prev) => {
-      captured = prev.map((c) =>
-        c.id === candidateId
-          ? { ...c, votes: Math.max(0, (c.votes || 0) + delta) }
-          : c
-      );
-      return captured;
+      return c;
     });
 
+    setCandidates(updated);
     playClickSound(delta > 0 ? 'add' : 'sub');
+    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
+  };
 
-    // Schedule save after state flush (next microtask)
-    // captured is already set synchronously by the updater above
-    Promise.resolve().then(() => {
-      saveQuickCountState(captured, invalidRef.current, notesRef.current, isLockedRef.current);
-    });
-  }, [saveQuickCountState]);
-
-  const handleInvalidChange = useCallback((delta: number) => {
-    if (isLockedRef.current) {
+  const handleInvalidChange = async (delta: number) => {
+    if (isLocked) {
       toast.error('Perhitungan suara sedang dikunci');
       return;
     }
-
-    lastActionRef.current = Date.now();
-    const nextInvalid = Math.max(0, invalidRef.current + delta);
+    const nextInvalid = Math.max(0, invalidVotes + delta);
     setInvalidVotes(nextInvalid);
     playClickSound(delta > 0 ? 'add' : 'sub');
-    saveQuickCountState(candidatesRef.current, nextInvalid, notesRef.current, isLockedRef.current);
-  }, [saveQuickCountState]);
+    await saveQuickCountState(candidates, nextInvalid, notes, isLocked);
+  };
 
-  const handleToggleLock = useCallback(async () => {
-    const nextLocked = !isLockedRef.current;
+  const handleToggleLock = async () => {
+    const nextLocked = !isLocked;
     setIsLocked(nextLocked);
-    const ok = await saveQuickCountState(candidatesRef.current, invalidRef.current, notesRef.current, nextLocked);
+    const ok = await saveQuickCountState(candidates, invalidVotes, notes, nextLocked);
     if (ok) {
       toast.success(nextLocked ? 'Perhitungan suara berhasil dikunci' : 'Kunci perhitungan suara dibuka');
     }
-  }, [saveQuickCountState]);
+  };
 
   const handleSaveNotes = async () => {
     setSavingNotes(true);
@@ -355,7 +364,7 @@ export default function QuickCountPage() {
 
     let updated: QuickCountCandidate[];
     if (editingCandidate) {
-      updated = candidatesRef.current.map((c) =>
+      updated = candidates.map((c) =>
         c.id === editingCandidate.id
           ? {
               ...c,
@@ -369,32 +378,32 @@ export default function QuickCountPage() {
     } else {
       const newPaslon: QuickCountCandidate = {
         id: `paslon-${Date.now()}`,
-        number: formNumber.trim() || String(candidatesRef.current.length + 1).padStart(2, '0'),
+        number: formNumber.trim() || String(candidates.length + 1).padStart(2, '0'),
         name: formName.trim(),
         tagline: formTagline.trim(),
         photo_url: formPhoto.trim() || undefined,
         votes: 0,
       };
-      updated = [...candidatesRef.current, newPaslon];
+      updated = [...candidates, newPaslon];
     }
 
     setCandidates(updated);
     setIsModalOpen(false);
-    await saveQuickCountState(updated, invalidRef.current, notesRef.current, isLockedRef.current);
+    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
     toast.success(editingCandidate ? 'Paslon berhasil diperbarui' : 'Paslon baru berhasil ditambahkan');
   };
 
   const handleDeleteCandidate = async (id: string, name: string) => {
-    if (isLockedRef.current) {
+    if (isLocked) {
       toast.error('Buka kunci terlebih dahulu untuk menghapus paslon');
       return;
     }
     if (!confirm(`Hapus ${name} dari daftar paslon? Suara yang sudah diinput akan terhapus.`)) {
       return;
     }
-    const updated = candidatesRef.current.filter((c) => c.id !== id);
+    const updated = candidates.filter((c) => c.id !== id);
     setCandidates(updated);
-    await saveQuickCountState(updated, invalidRef.current, notesRef.current, isLockedRef.current);
+    await saveQuickCountState(updated, invalidVotes, notes, isLocked);
     toast.success('Paslon berhasil dihapus');
   };
 
@@ -402,10 +411,10 @@ export default function QuickCountPage() {
     if (!confirm('PERINGATAN: Apakah Anda yakin ingin mereset semua hitungan suara kembali ke 0? Tindakan ini tidak dapat dibatalkan.')) {
       return;
     }
-    const resetCandidates = candidatesRef.current.map((c) => ({ ...c, votes: 0 }));
+    const resetCandidates = candidates.map((c) => ({ ...c, votes: 0 }));
     setCandidates(resetCandidates);
     setInvalidVotes(0);
-    await saveQuickCountState(resetCandidates, 0, notesRef.current, isLockedRef.current);
+    await saveQuickCountState(resetCandidates, 0, notes, isLocked);
     toast.success('Seluruh hitungan suara berhasil direset ke 0');
   };
 
@@ -603,6 +612,142 @@ export default function QuickCountPage() {
           </div>
         </div>
       )}
+
+      {/* ========================================================
+          CARD REKAPITULASI SUARA MAHASISWA ONLINE (E-VOTING)
+          ======================================================== */}
+      <div className="bg-gradient-to-r from-purple-950/40 via-indigo-950/30 to-slate-900/60 p-5 rounded-2xl border border-purple-500/30 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-purple-500/20 text-purple-400 rounded-xl border border-purple-500/30 shrink-0">
+              <Globe className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white tracking-tight">
+                  Rekapitulasi Suara Mahasiswa Online (E-Voting)
+                </h3>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  onlineStats.isMerged
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                }`}>
+                  {onlineStats.isMerged ? 'Sudah Digabungkan ke Quick Count ✅' : 'Belum Digabungkan ⚡'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Data dihimpun secara rahasia langsung dari Bilik Suara Digital (Luber Jurdil).
+              </p>
+            </div>
+          </div>
+
+          {/* Merge / Unmerge Button */}
+          <div className="flex items-center gap-2">
+            {!onlineStats.isMerged ? (
+              <button
+                type="button"
+                onClick={handleMergeOnlineVotes}
+                disabled={mergingOnline || isLocked || onlineStats.totalOnlineVotesCast === 0}
+                className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/20 transition disabled:opacity-50 cursor-pointer"
+              >
+                <Vote className={`w-4 h-4 ${mergingOnline ? 'animate-spin' : ''}`} />
+                <span>{mergingOnline ? 'Menambahkan...' : 'Tambahkan Suara Online ke Quick Count'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleUnmergeOnlineVotes}
+                disabled={mergingOnline || isLocked}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${mergingOnline ? 'animate-spin' : ''}`} />
+                <span>{mergingOnline ? 'Membatalkan...' : 'Batalkan Penambahan'}</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Online KPI Mini-Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+          <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
+            <span className="text-[11px] text-slate-400 block font-medium">Total Pemilih Online</span>
+            <span className="text-xl font-bold text-white font-mono">{onlineStats.totalOnlineVoters}</span>
+            <span className="text-[10px] text-slate-500 block">Mahasiswa & Dosen Online</span>
+          </div>
+
+          <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
+            <span className="text-[11px] text-slate-400 block font-medium">Presensi Online Hadir</span>
+            <span className="text-xl font-bold text-emerald-400 font-mono">{onlineStats.onlineAttended}</span>
+            <span className="text-[10px] text-emerald-500 block">
+              {onlineStats.totalOnlineVoters > 0
+                ? Math.round((onlineStats.onlineAttended / onlineStats.totalOnlineVoters) * 100)
+                : 0}% Terverifikasi Hadir
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
+            <span className="text-[11px] text-slate-400 block font-medium">Sudah Mencoblos Online</span>
+            <span className="text-xl font-bold text-purple-400 font-mono">{onlineStats.onlineVoted}</span>
+            <span className="text-[10px] text-purple-400 block">
+              Partisipasi {onlineStats.onlineTurnoutPct}%
+            </span>
+          </div>
+
+          <div className="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
+            <span className="text-[11px] text-slate-400 block font-medium">Belum Mencoblos Online</span>
+            <span className="text-xl font-bold text-slate-400 font-mono">
+              {Math.max(0, onlineStats.onlineAttended - onlineStats.onlineVoted)}
+            </span>
+            <span className="text-[10px] text-slate-500 block">Hadir tapi belum vote</span>
+          </div>
+        </div>
+
+        {/* Per-Paslon Online Tally Breakdown */}
+        <div className="p-3.5 bg-slate-900/80 rounded-xl border border-purple-500/20 space-y-2">
+          <div className="flex items-center justify-between text-xs text-purple-300 font-semibold uppercase tracking-wider">
+            <span>Rincian Suara E-Voting Masuk (Perolehan Online)</span>
+            <span>Total: {onlineStats.totalOnlineVotesCast} Suara</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+            {candidates.map((c) => {
+              const candVote = onlineStats.candidateTallies[c.id]?.votes || 0;
+              const pct = onlineStats.totalOnlineVotesCast > 0
+                ? ((candVote / onlineStats.totalOnlineVotesCast) * 100).toFixed(1)
+                : '0';
+
+              return (
+                <div key={c.id} className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+                  <div className="truncate pr-2">
+                    <span className="text-[11px] font-mono font-bold text-indigo-400 mr-1.5">{c.number}</span>
+                    <span className="text-xs font-semibold text-slate-200 truncate">{c.name}</span>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-sm font-bold text-white font-mono">{candVote}</span>
+                    <span className="text-[10px] text-slate-400 ml-1">({pct}%)</span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Kotak Kosong / Golput */}
+            <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+              <div className="truncate pr-2">
+                <span className="text-[11px] font-mono font-bold text-gray-400 mr-1.5">00</span>
+                <span className="text-xs font-semibold text-slate-400 truncate">Kotak Kosong / Golput</span>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-sm font-bold text-gray-300 font-mono">{onlineStats.golputCount}</span>
+                <span className="text-[10px] text-slate-400 ml-1">
+                  ({onlineStats.totalOnlineVotesCast > 0
+                    ? ((onlineStats.golputCount / onlineStats.totalOnlineVotesCast) * 100).toFixed(1)
+                    : '0'}%)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Candidate Voting Board */}
       <div className="space-y-4">

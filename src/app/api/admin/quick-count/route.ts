@@ -4,6 +4,7 @@ import { getWIBDate, getWIBLocaleString } from '@/lib/utils';
 import { QuickCountCandidate, QuickCountConfig } from '@/types/database';
 import { getAuthClient } from '@/lib/googleSheets';
 import { google } from 'googleapis';
+import { getOnlineVotingStats } from '@/lib/onlineVoting';
 
 const DEFAULT_CANDIDATES: QuickCountCandidate[] = [
   {
@@ -73,6 +74,9 @@ export async function GET(request: NextRequest) {
     // Rekonsiliasi akurasi suara
     const discrepancy = totalBallotsCounted - votedVotersCount;
 
+    // Ambil statistik pemungutan suara online (HANYA AGREGAT)
+    const onlineStats = await getOnlineVotingStats(date);
+
     return NextResponse.json({
       success: true,
       config: {
@@ -81,7 +85,9 @@ export async function GET(request: NextRequest) {
         notes: quickCountConfig.notes || '',
         is_locked: Boolean(quickCountConfig.is_locked),
         updated_at: quickCountConfig.updated_at || null,
+        is_online_merged: onlineStats.isMerged,
       },
+      onlineStats,
       stats: {
         totalDpt,
         totalPresent,
@@ -117,6 +123,119 @@ export async function POST(request: NextRequest) {
 
     const extraTexts = landingData.extra_texts || {};
     const nowWib = getWIBLocaleString();
+
+    // Aksi: Tambahkan / Gabungkan Suara Online ke Quick Count
+    if (action === 'merge_online_votes') {
+      const onlineStats = await getOnlineVotingStats();
+      if (extraTexts.online_votes_merged) {
+        return NextResponse.json(
+          { error: 'Suara online sudah pernah ditambahkan ke Quick Count.' },
+          { status: 400 }
+        );
+      }
+
+      const curQuickCount: QuickCountConfig = extraTexts.quick_count || {
+        candidates: DEFAULT_CANDIDATES,
+        invalid_votes: 0,
+      };
+      const baseCandidates: QuickCountCandidate[] = curQuickCount.candidates && curQuickCount.candidates.length > 0
+        ? curQuickCount.candidates
+        : DEFAULT_CANDIDATES;
+
+      const mergedCandidates = baseCandidates.map((c) => {
+        const addVotes = onlineStats.candidateTallies[c.id]?.votes || 0;
+        return {
+          ...c,
+          votes: (c.votes || 0) + addVotes,
+        };
+      });
+
+      const mergedInvalidVotes = (curQuickCount.invalid_votes || 0) + onlineStats.golputCount;
+
+      const updatedQuickCount: QuickCountConfig = {
+        ...curQuickCount,
+        candidates: mergedCandidates,
+        invalid_votes: mergedInvalidVotes,
+        updated_at: nowWib,
+      };
+
+      const updatedExtra = {
+        ...extraTexts,
+        quick_count: updatedQuickCount,
+        online_votes_merged: true,
+      };
+
+      const { error: updateErr } = await supabase
+        .from('landing_settings')
+        .update({
+          extra_texts: updatedExtra,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', landingData.id);
+
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: `Berhasil menambahkan ${onlineStats.totalOnlineVotesCast} suara online (${onlineStats.onlineVoted - onlineStats.golputCount} suara paslon + ${onlineStats.golputCount} golput) ke Quick Count! 🎉`,
+        quickCount: updatedQuickCount,
+        isMerged: true,
+      });
+    }
+
+    // Aksi: Batalkan Penambahan Suara Online dari Quick Count
+    if (action === 'unmerge_online_votes') {
+      const onlineStats = await getOnlineVotingStats();
+      const curQuickCount: QuickCountConfig = extraTexts.quick_count || {
+        candidates: DEFAULT_CANDIDATES,
+        invalid_votes: 0,
+      };
+      const baseCandidates: QuickCountCandidate[] = curQuickCount.candidates || DEFAULT_CANDIDATES;
+
+      const unmergedCandidates = baseCandidates.map((c) => {
+        const subVotes = onlineStats.candidateTallies[c.id]?.votes || 0;
+        return {
+          ...c,
+          votes: Math.max(0, (c.votes || 0) - subVotes),
+        };
+      });
+
+      const unmergedInvalidVotes = Math.max(0, (curQuickCount.invalid_votes || 0) - onlineStats.golputCount);
+
+      const updatedQuickCount: QuickCountConfig = {
+        ...curQuickCount,
+        candidates: unmergedCandidates,
+        invalid_votes: unmergedInvalidVotes,
+        updated_at: nowWib,
+      };
+
+      const updatedExtra = {
+        ...extraTexts,
+        quick_count: updatedQuickCount,
+        online_votes_merged: false,
+      };
+
+      const { error: updateErr } = await supabase
+        .from('landing_settings')
+        .update({
+          extra_texts: updatedExtra,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', landingData.id);
+
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Suara online berhasil ditarik kembali dari Quick Count.',
+        quickCount: updatedQuickCount,
+        isMerged: false,
+      });
+    }
 
     if (action === 'sync_to_sheets') {
       // 2. Sinkronkan Hasil Quick Count ke Google Sheets di tab "Quick Count Pemira"

@@ -228,6 +228,32 @@ export default function LandingSettingsPage() {
   };
 
   // Lecturer Management
+  const handleToggleLecturerType = async (docName: string) => {
+    const currentMembers = (form.extra_texts as any)?.online_members || {};
+    const upperName = docName.toUpperCase();
+    const currentType = currentMembers[upperName] === 'online' ? 'online' : 'offline';
+    const nextType: 'online' | 'offline' = currentType === 'online' ? 'offline' : 'online';
+
+    const updatedMembers = {
+      ...currentMembers,
+      [upperName]: nextType,
+    };
+
+    const updatedExtra = { ...form.extra_texts, online_members: updatedMembers };
+    setForm((prev) => ({ ...prev, extra_texts: updatedExtra }));
+
+    try {
+      await fetch('/api/admin/settings/landing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, extra_texts: updatedExtra }),
+      });
+      toast.success(`Dosen ${docName} dialihkan ke mode ${nextType.toUpperCase()}!`);
+    } catch (e) {
+      toast.error('Gagal memperbarui status dosen');
+    }
+  };
+
   const handleAddLecturer = async () => {
     const name = newLecturer.trim();
     if (!name) return;
@@ -1183,27 +1209,54 @@ export default function LandingSettingsPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {form.extra_texts.lecturers.map((doc, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8F9FA] border border-black/5 hover:border-blue-200 transition-all text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-blue-100 text-[#2563EB] text-[10px] font-bold flex items-center justify-center shrink-0">
-                        {idx + 1}
-                      </span>
-                      <span className="font-semibold text-[#111827]">{doc}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveLecturer(idx)}
-                      className="text-gray-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"
-                      title="Hapus dosen"
+                {form.extra_texts.lecturers.map((doc, idx) => {
+                  const onlineMembers = (form.extra_texts as any)?.online_members || {};
+                  const isOnline = onlineMembers[doc.toUpperCase()] === 'online';
+
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-[#F8F9FA] border border-black/5 hover:border-blue-200 transition-all text-xs"
                     >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <span className="w-5 h-5 rounded-full bg-blue-100 text-[#2563EB] text-[10px] font-bold flex items-center justify-center shrink-0">
+                          {idx + 1}
+                        </span>
+                        <div className="truncate">
+                          <span className="font-semibold text-[#111827] block truncate">{doc}</span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-sm inline-block ${
+                            isOnline ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {isOnline ? '🌐 Online' : '🏛️ Offline'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleLecturerType(doc)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                            isOnline
+                              ? 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-300'
+                              : 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200'
+                          }`}
+                          title={`Ubah status ke ${isOnline ? 'Offline' : 'Online'}`}
+                        >
+                          {isOnline ? 'Set Offline' : 'Set Online'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLecturer(idx)}
+                          className="text-gray-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"
+                          title="Hapus dosen"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

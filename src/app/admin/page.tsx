@@ -23,7 +23,10 @@ import {
   CalendarDays,
   Sparkles,
   Layers,
-  Trash2
+  Trash2,
+  Globe,
+  Building,
+  ArrowLeftRight
 } from 'lucide-react';
 import { formatDate, getWIBDate } from '@/lib/utils';
 import { getNextWIBDate, resolveActiveDay, getDaysList } from '@/lib/dayHelper';
@@ -65,6 +68,12 @@ export default function AdminMonitoringPage() {
     totalPresent: 0,
     totalAbsent: 0,
     attendancePercentage: 0,
+    onlineStats: {
+      total: 0,
+      present: 0,
+      absent: 0,
+      turnoutPercentage: 0,
+    },
     presentList: [] as any[],
     absentList: [] as any[],
     allCombined: [] as any[],
@@ -294,6 +303,12 @@ export default function AdminMonitoringPage() {
           totalPresent: data.totalPresent,
           totalAbsent: data.totalAbsent,
           attendancePercentage: data.attendancePercentage,
+          onlineStats: data.onlineStats || {
+            total: 0,
+            present: 0,
+            absent: 0,
+            turnoutPercentage: 0,
+          },
           presentList: data.presentList || [],
           absentList: data.absentList || [],
           allCombined: data.allCombined || [],
@@ -312,6 +327,38 @@ export default function AdminMonitoringPage() {
     } finally {
       if (!isBackground) setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const handleToggleStudentType = async (item: any) => {
+    const currentType = item.attendance_type === 'online' ? 'online' : 'offline';
+    const nextType: 'online' | 'offline' = currentType === 'online' ? 'offline' : 'online';
+
+    // Optimistic update
+    setMetrics((prev) => ({
+      ...prev,
+      presentList: prev.presentList.map((p) => p.nim === item.nim ? { ...p, attendance_type: nextType } : p),
+      absentList: prev.absentList.map((a) => a.nim === item.nim ? { ...a, attendance_type: nextType } : a),
+      allCombined: prev.allCombined.map((c) => c.nim === item.nim ? { ...c, attendance_type: nextType } : c),
+    }));
+
+    try {
+      const res = await fetch('/api/admin/students', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: item.id,
+          nim: item.nim,
+          attendance_type: nextType,
+        }),
+      });
+      if (res.ok) {
+        toast.success(`${item.name} berhasil diubah ke mode ${nextType.toUpperCase()}!`);
+        fetchMonitoringData(true);
+      }
+    } catch (e) {
+      toast.error('Gagal memperbarui status kehadiran');
+      fetchMonitoringData(true);
     }
   };
 
@@ -627,6 +674,37 @@ export default function AdminMonitoringPage() {
         </div>
       </div>
 
+      {/* ONLINE ATTENDANCE BANNER */}
+      {metrics.onlineStats && metrics.onlineStats.total > 0 && (
+        <div className="p-4 bg-purple-50/70 border border-purple-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shrink-0">
+              <Globe size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-purple-900">
+                  Presensi & E-Voting Mahasiswa Online
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-purple-200 text-purple-800 text-[10px] font-bold">
+                  {metrics.onlineStats.turnoutPercentage}% Hadir
+                </span>
+              </div>
+              <p className="text-purple-700 text-[11px] mt-0.5">
+                Total <b>{metrics.onlineStats.total}</b> pemilih online • <b>{metrics.onlineStats.present}</b> sudah hadir • <b>{metrics.onlineStats.absent}</b> belum hadir
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/admin/quick-count"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-xs transition-all shadow-2xs shrink-0 self-start sm:self-auto"
+          >
+            <span>Lihat Suara Online di Quick Count</span>
+            <Sparkles size={13} />
+          </Link>
+        </div>
+      )}
+
       {/* FILTER & SEARCH BAR */}
       <div className="bg-white p-4 rounded-2xl border border-black/5 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -777,6 +855,7 @@ export default function AdminMonitoringPage() {
                   <th className="py-3.5 px-4 whitespace-nowrap">NIM</th>
                   <th className="py-3.5 px-4 whitespace-nowrap">Nama Mahasiswa</th>
                   <th className="py-3.5 px-4 whitespace-nowrap">Angkatan</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap text-center">Tipe</th>
                   <th className="py-3.5 px-4 whitespace-nowrap">Dosen</th>
                   <th className="py-3.5 px-4 whitespace-nowrap">Waktu Presensi</th>
                   <th className="py-3.5 px-4 whitespace-nowrap">Status Kehadiran</th>
@@ -802,6 +881,26 @@ export default function AdminMonitoringPage() {
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200 whitespace-nowrap">
                           {item.class_name}
                         </span>
+                      </td>
+                      <td className="py-3.5 px-4 whitespace-nowrap text-center">
+                        <div className="inline-flex items-center gap-1.5">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            item.attendance_type === 'online'
+                              ? 'bg-purple-100 text-purple-800 border-purple-200'
+                              : 'bg-gray-100 text-gray-700 border-gray-200'
+                          }`}>
+                            {item.attendance_type === 'online' ? <Globe size={11} className="text-purple-600" /> : <Building size={11} className="text-gray-500" />}
+                            <span>{item.attendance_type === 'online' ? 'Online' : 'Offline'}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStudentType(item)}
+                            className="p-1 text-gray-400 hover:text-purple-700 hover:bg-purple-50 rounded-md transition-all cursor-pointer"
+                            title={`Alihkan ke ${item.attendance_type === 'online' ? 'Offline' : 'Online'}`}
+                          >
+                            <ArrowLeftRight size={11} />
+                          </button>
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         {item.lecturer_name ? (

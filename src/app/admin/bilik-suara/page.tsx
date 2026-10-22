@@ -460,8 +460,13 @@ export default function BilikSuaraPage() {
                       </td>
 
                       <td className="py-3 px-4 text-center">
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-gray-100 text-gray-700">
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-gray-100 text-gray-700 inline-flex items-center gap-1">
                           {item.class_name}
+                          {item.attendance_type === 'online' && (
+                            <span className="px-1 py-0.2 text-[9px] font-bold rounded-sm bg-purple-100 text-purple-800 border border-purple-200">
+                              Online
+                            </span>
+                          )}
                         </span>
                       </td>
 
@@ -471,10 +476,15 @@ export default function BilikSuaraPage() {
                             Belum Hadir
                           </span>
                         ) : isVoted ? (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
-                            <Check size={12} />
-                            Sudah Nyoblos
-                          </span>
+                          <div className="inline-flex flex-col items-center">
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
+                              <Check size={12} />
+                              Sudah Nyoblos
+                            </span>
+                            {item.attendance_type === 'online' && (
+                              <span className="text-[9px] text-purple-600 font-bold mt-0.5">E-Voting Digital</span>
+                            )}
+                          </div>
                         ) : (
                           <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1">
                             <Clock size={12} />

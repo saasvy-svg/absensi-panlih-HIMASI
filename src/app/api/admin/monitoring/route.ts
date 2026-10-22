@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     // 1. Ambil data master mahasiswa
     let studentQuery = supabase
       .from('students')
-      .select('id, nim, name, class_name')
+      .select('*')
       .eq('is_active', true);
 
     if (className && className !== 'all' && className !== 'Dosen') {
@@ -26,13 +26,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: studentError.message }, { status: 500 });
     }
 
-    // 2. Ambil data dosen dari landing settings
+    // 2. Ambil data dosen & online_members dari landing settings
     const { data: landingData } = await supabase
       .from('landing_settings')
       .select('extra_texts')
       .maybeSingle();
 
     const registeredLecturers: string[] = landingData?.extra_texts?.lecturers || [];
+    const onlineMembers: Record<string, 'online' | 'offline'> = landingData?.extra_texts?.online_members || {};
+
+    const studentTypeMap = new Map<string, 'online' | 'offline'>();
+    (allStudents || []).forEach((s: any) => {
+      const uNim = String(s.nim).trim().toUpperCase();
+      const t = s.attendance_type === 'online' || onlineMembers[uNim] === 'online' ? 'online' : 'offline';
+      studentTypeMap.set(uNim, t);
+    });
 
     // 3. Ambil data absensi pada tanggal tersebut
     let attQuery = supabase
@@ -71,12 +79,14 @@ export async function GET(request: NextRequest) {
       (allStudents || []).forEach((student) => {
         const normalizedClass = normalizeAngkatan(student.class_name);
         const upperNim = String(student.nim).trim().toUpperCase();
+        const attType = studentTypeMap.get(upperNim) || 'offline';
 
         if (attendanceMapByNim.has(upperNim)) {
           const item = attendanceMapByNim.get(upperNim);
           presentList.push({
             ...item,
             class_name: normalizeAngkatan(item.class_name),
+            attendance_type: attType,
           });
         } else {
           absentList.push({
@@ -84,6 +94,7 @@ export async function GET(request: NextRequest) {
             nim: student.nim,
             name: student.name,
             class_name: normalizedClass,
+            attendance_type: attType,
             status: 'Belum Hadir',
             check_in_time: null,
             attendance_date: date,
@@ -99,6 +110,8 @@ export async function GET(request: NextRequest) {
       registeredLecturers.forEach((docName, idx) => {
         const upperName = docName.trim().toUpperCase();
         processedDosenNames.add(upperName);
+        const docNim = `DOSEN-${String(idx + 1).padStart(2, '0')}`;
+        const docType = onlineMembers[upperName] || onlineMembers[docNim] || 'offline';
 
         const foundAtt = attendanceMapByName.get(upperName);
         if (foundAtt) {
@@ -106,14 +119,16 @@ export async function GET(request: NextRequest) {
             ...foundAtt,
             class_name: 'Dosen',
             lecturer_name: docName,
+            attendance_type: docType,
           });
         } else {
           absentList.push({
             id: `dosen-${idx + 1}`,
-            nim: `DOSEN-${String(idx + 1).padStart(2, '0')}`,
+            nim: docNim,
             name: docName,
             class_name: 'Dosen',
             lecturer_name: docName,
+            attendance_type: docType,
             status: 'Belum Hadir',
             check_in_time: null,
             attendance_date: date,
@@ -129,10 +144,13 @@ export async function GET(request: NextRequest) {
           (att.class_name && String(att.class_name).toLowerCase().includes('dosen'));
 
         if (isDosen && att.name && !processedDosenNames.has(String(att.name).trim().toUpperCase())) {
+          const upperName = String(att.name).trim().toUpperCase();
+          const docType = onlineMembers[upperName] || 'offline';
           presentList.push({
             ...att,
             class_name: 'Dosen',
             lecturer_name: att.name,
+            attendance_type: docType,
           });
         }
       });
@@ -147,9 +165,11 @@ export async function GET(request: NextRequest) {
 
       if (!isDosen && !allStudents?.some((s) => s.nim === att.nim)) {
         if (!presentList.some((p) => p.nim === att.nim)) {
+          const uNim = String(att.nim || '').trim().toUpperCase();
           presentList.push({
             ...att,
             class_name: normalizeAngkatan(att.class_name),
+            attendance_type: studentTypeMap.get(uNim) || onlineMembers[uNim] || 'offline',
           });
         }
       }
@@ -160,6 +180,11 @@ export async function GET(request: NextRequest) {
     const totalAbsent = absentList.length;
     const attendancePercentage = totalTarget > 0 ? Math.round((totalPresent / totalTarget) * 100) : 0;
 
+    // Metrik Pemilih / Peserta Online
+    const onlinePresent = presentList.filter((p) => p.attendance_type === 'online').length;
+    const onlineAbsent = absentList.filter((a) => a.attendance_type === 'online').length;
+    const onlineTotal = onlinePresent + onlineAbsent;
+
     return NextResponse.json({
       date,
       totalStudents: (allStudents || []).length,
@@ -168,6 +193,12 @@ export async function GET(request: NextRequest) {
       totalPresent,
       totalAbsent,
       attendancePercentage,
+      onlineStats: {
+        total: onlineTotal,
+        present: onlinePresent,
+        absent: onlineAbsent,
+        turnoutPercentage: onlineTotal > 0 ? Math.round((onlinePresent / onlineTotal) * 100) : 0,
+      },
       presentList,
       absentList,
       allCombined: [...presentList, ...absentList],

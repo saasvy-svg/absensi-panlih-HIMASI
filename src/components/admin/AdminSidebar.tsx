@@ -17,7 +17,9 @@ import {
   X,
   GraduationCap,
   ExternalLink,
-  Loader2
+  Loader2,
+  Globe,
+  ArrowRight
 } from 'lucide-react';
 import { createClient } from '@/utils/supabase/client';
 
@@ -64,6 +66,17 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
   const [institutionName, setInstitutionName] = useState('Admin Panel');
   const [authChecking, setAuthChecking] = useState(true);
 
+  // Online Voting Quick Summary
+  const [onlineSummary, setOnlineSummary] = useState<{
+    totalOnlineVoters: number;
+    onlineAttended: number;
+    onlineVoted: number;
+    candidateTallies: Record<string, { number: string; name: string; votes: number }>;
+    golputCount: number;
+    totalOnlineVotesCast: number;
+    isMerged: boolean;
+  } | null>(null);
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -83,6 +96,16 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
     checkAuth();
   }, []);
 
+  const fetchOnlineSummary = async () => {
+    try {
+      const res = await fetch('/api/admin/quick-count');
+      const data = await res.json();
+      if (res.ok && data.onlineStats) {
+        setOnlineSummary(data.onlineStats);
+      }
+    } catch (e) {}
+  };
+
   const fetchBranding = async () => {
     try {
       const res = await fetch('/api/admin/settings/landing');
@@ -96,11 +119,20 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     fetchBranding();
+    fetchOnlineSummary();
+
+    const interval = setInterval(fetchOnlineSummary, 15000);
 
     // Listen to updates from settings page
-    const handleUpdate = () => fetchBranding();
+    const handleUpdate = () => {
+      fetchBranding();
+      fetchOnlineSummary();
+    };
     window.addEventListener('landing-settings-updated', handleUpdate);
-    return () => window.removeEventListener('landing-settings-updated', handleUpdate);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('landing-settings-updated', handleUpdate);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -210,6 +242,66 @@ export default function AdminSidebar({ children }: { children: React.ReactNode }
             );
           })}
         </div>
+
+        {/* Live Online Votes Summary Widget (Sidebar Card) */}
+        {!isCollapsed && onlineSummary && (
+          <div className="px-3 pb-3">
+            <div className="p-3 bg-gradient-to-br from-purple-50 to-indigo-50/50 rounded-2xl border border-purple-200/80 text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-purple-900">
+                  <Globe size={14} className="text-purple-600" />
+                  <span>Suara Online</span>
+                </div>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  onlineSummary.isMerged ? 'bg-emerald-100 text-emerald-800' : 'bg-purple-200 text-purple-800'
+                }`}>
+                  {onlineSummary.isMerged ? 'Merged ✅' : 'Live'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1 text-center py-1 bg-white/70 rounded-xl border border-purple-100">
+                <div>
+                  <span className="text-[10px] text-gray-400 block font-bold">Total</span>
+                  <span className="font-mono font-bold text-gray-800 text-xs">{onlineSummary.totalOnlineVoters}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-emerald-600 block font-bold">Hadir</span>
+                  <span className="font-mono font-bold text-emerald-700 text-xs">{onlineSummary.onlineAttended}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-purple-600 block font-bold">Vote</span>
+                  <span className="font-mono font-bold text-purple-700 text-xs">{onlineSummary.onlineVoted}</span>
+                </div>
+              </div>
+
+              {/* Per-Paslon Quick Count in Sidebar */}
+              {Object.keys(onlineSummary.candidateTallies).length > 0 && (
+                <div className="space-y-1 pt-0.5">
+                  {Object.entries(onlineSummary.candidateTallies).map(([id, c]) => (
+                    <div key={id} className="flex items-center justify-between text-[11px] px-1">
+                      <span className="text-gray-600 truncate max-w-[120px]">
+                        Paslon {c.number}
+                      </span>
+                      <span className="font-mono font-bold text-purple-900">{c.votes} suara</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between text-[11px] px-1 text-gray-500">
+                    <span>Golput / Rusak</span>
+                    <span className="font-mono font-bold">{onlineSummary.golputCount} suara</span>
+                  </div>
+                </div>
+              )}
+
+              <Link
+                href="/admin/quick-count"
+                className="w-full mt-1.5 py-1.5 px-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-2xs transition-all"
+              >
+                <span>Kelola di Quick Count</span>
+                <ArrowRight size={12} />
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Bottom User Profile & Logout */}
         <div className="p-3 border-t border-black/5">

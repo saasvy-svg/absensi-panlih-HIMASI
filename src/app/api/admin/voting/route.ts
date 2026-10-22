@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     const extraTexts = landingData?.extra_texts || {};
     const votingRecords: Record<string, { has_voted: boolean; voted_at?: string; notes?: string }> =
       extraTexts.voting_records || {};
+    const onlineMembers: Record<string, 'online' | 'offline'> = extraTexts.online_members || {};
     const lecturers: string[] = extraTexts.lecturers || [];
 
     // 2. Ambil master mahasiswa
@@ -31,6 +32,13 @@ export async function GET(request: NextRequest) {
     if (stdError) {
       return NextResponse.json({ error: stdError.message }, { status: 500 });
     }
+
+    const studentTypeMap = new Map<string, 'online' | 'offline'>();
+    (allStudents || []).forEach((s: any) => {
+      const uNim = String(s.nim).trim().toUpperCase();
+      const t = s.attendance_type === 'online' || onlineMembers[uNim] === 'online' ? 'online' : 'offline';
+      studentTypeMap.set(uNim, t);
+    });
 
     // 3. Ambil absensi pada tanggal target
     const { data: attendances, error: attError } = await supabase
@@ -54,6 +62,8 @@ export async function GET(request: NextRequest) {
     const presentList = (attendances || []).map((att, idx) => {
       const nimKey = String(att.nim || '').trim().toUpperCase();
       const voteInfo = votingRecords[nimKey] || { has_voted: false, voted_at: null };
+      const attType = studentTypeMap.get(nimKey) || onlineMembers[nimKey] || onlineMembers[String(att.name || '').trim().toUpperCase()] || 'offline';
+
       return {
         queue_number: idx + 1,
         id: att.id,
@@ -63,6 +73,7 @@ export async function GET(request: NextRequest) {
         check_in_time: att.check_in_time,
         attendance_date: att.attendance_date,
         status: att.status,
+        attendance_type: attType,
         has_voted: Boolean(voteInfo.has_voted),
         voted_at: voteInfo.voted_at || null,
         notes: voteInfo.notes || att.notes || null,
@@ -79,6 +90,7 @@ export async function GET(request: NextRequest) {
           nim: s.nim,
           name: s.name,
           class_name: normalizeAngkatan(s.class_name),
+          attendance_type: studentTypeMap.get(nimKey) || 'offline',
           has_voted: false,
         });
       }
@@ -87,12 +99,16 @@ export async function GET(request: NextRequest) {
     // Dosen yang belum hadir
     lecturers.forEach((docName, idx) => {
       const docNim = `DOSEN-${String(idx + 1).padStart(2, '0')}`;
+      const docKey = docName.toUpperCase();
+      const docType = onlineMembers[docKey] || onlineMembers[docNim] || 'offline';
+
       if (!attMap.has(docName.toUpperCase()) && !attMap.has(docNim)) {
         absentList.push({
           id: `dosen-${idx + 1}`,
           nim: docNim,
           name: docName,
           class_name: 'Dosen',
+          attendance_type: docType,
           has_voted: false,
         });
       }

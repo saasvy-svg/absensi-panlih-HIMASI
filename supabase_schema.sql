@@ -172,5 +172,41 @@ CREATE POLICY "Admin full access sheet_configs" ON public.sheet_configs
     FOR ALL TO authenticated
     USING (true) WITH CHECK (true);
 
+-- Pastikan kolom attendance_type ada di students (Online / Offline)
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS attendance_type VARCHAR(20) DEFAULT 'offline';
+
 -- 8. AKTIFKAN REALTIME UNTUK MONITORING ADMIN
 ALTER PUBLICATION supabase_realtime ADD TABLE public.attendances;
+
+-- ========================================================
+-- 9. TABEL REKAPITULASI PEMILIHAN ONLINE (E-VOTING PEMIRA)
+-- ========================================================
+-- Khusus mencatat suara pemilih online (Rahasia Dapur Panlih)
+CREATE TABLE IF NOT EXISTS public.online_votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nim VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(150),
+    class_name VARCHAR(50),
+    voter_role VARCHAR(20) DEFAULT 'mahasiswa', -- 'mahasiswa' / 'dosen'
+    choice_id VARCHAR(50) NOT NULL,
+    choice_number VARCHAR(20) NOT NULL,
+    choice_name VARCHAR(150) NOT NULL,
+    is_golput BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_online_votes_nim ON public.online_votes(nim);
+
+ALTER TABLE public.online_votes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admin full access online_votes" ON public.online_votes
+    FOR ALL TO authenticated
+    USING (true) WITH CHECK (true);
+
+CREATE POLICY "Public online_votes insert" ON public.online_votes
+    FOR INSERT TO anon, authenticated
+    WITH CHECK (true);
+
+CREATE POLICY "Public online_votes read" ON public.online_votes
+    FOR SELECT TO anon, authenticated
+    USING (true);
