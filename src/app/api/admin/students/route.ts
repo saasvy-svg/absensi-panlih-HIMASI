@@ -253,13 +253,18 @@ export async function PATCH(request: NextRequest) {
 
     // 2. Coba update kolom di tabel students jika ada
     try {
-      let query = supabase.from('students').update({ attendance_type: nextType });
       if (id) {
-        query = query.eq('id', id);
-      } else if (nim) {
-        query = query.ilike('nim', String(nim).trim());
+        await supabase
+          .from('students')
+          .update({ attendance_type: nextType, updated_at: new Date().toISOString() })
+          .eq('id', id);
       }
-      await query;
+      if (nim) {
+        await supabase
+          .from('students')
+          .update({ attendance_type: nextType, updated_at: new Date().toISOString() })
+          .ilike('nim', String(nim).trim());
+      }
     } catch (e) {}
 
     return NextResponse.json({

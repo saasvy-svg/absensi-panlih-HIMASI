@@ -26,15 +26,12 @@ export async function getMemberAttendanceType(
   nim: string,
   studentFromDb?: { attendance_type?: string | null } | null
 ): Promise<'online' | 'offline'> {
+  if (!nim) return 'offline';
   const cleanNim = String(nim).trim().toUpperCase();
 
-  // 1. Cek dari kolom attendance_type jika ada
-  if (studentFromDb?.attendance_type) {
-    return studentFromDb.attendance_type.toLowerCase() === 'online' ? 'online' : 'offline';
-  }
-
-  // 2. Cek dari extra_texts.online_members
   const supabase = createAdminClient();
+
+  // 1. Prioritaskan setting eksplisit dari extra_texts.online_members (tempat Admin toggle realtime)
   try {
     const { data: landingData } = await supabase
       .from('landing_settings')
@@ -43,7 +40,32 @@ export async function getMemberAttendanceType(
 
     const onlineMembers: Record<string, 'online' | 'offline'> = landingData?.extra_texts?.online_members || {};
     if (onlineMembers[cleanNim]) {
-      return onlineMembers[cleanNim];
+      return onlineMembers[cleanNim] === 'online' ? 'online' : 'offline';
+    }
+  } catch (e) {}
+
+  // 2. Cek dari kolom attendance_type jika disediakan
+  if (studentFromDb?.attendance_type) {
+    const typeStr = String(studentFromDb.attendance_type).trim().toLowerCase();
+    if (typeStr === 'online' || typeStr === 'daring') {
+      return 'online';
+    }
+    return 'offline';
+  }
+
+  // 3. Fallback query langsung ke tabel students di database
+  try {
+    const { data: s } = await supabase
+      .from('students')
+      .select('attendance_type')
+      .ilike('nim', cleanNim)
+      .maybeSingle();
+
+    if (s?.attendance_type) {
+      const typeStr = String(s.attendance_type).trim().toLowerCase();
+      if (typeStr === 'online' || typeStr === 'daring') {
+        return 'online';
+      }
     }
   } catch (e) {}
 

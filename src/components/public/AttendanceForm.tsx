@@ -198,6 +198,7 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
         if (data.golputOption) {
           setGolputCandidate(data.golputOption);
         }
+        setSuccessReceipt(null);
         setShowVotingBooth(true);
       } else {
         toast.error(data.error || 'Gagal memuat kandidat bilik suara.');
@@ -277,12 +278,22 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
         // ========================================================
         // LOGIKA TRANSISI BILIK SUARA ONLINE VS OFFLINE
         // ========================================================
-        if (student.attendance_type === 'online') {
+        const resolvedType = String(result.attendance_type || student.attendance_type || 'offline').trim().toLowerCase();
+        const hasVoted = Boolean(result.has_voted_online ?? student.has_voted_online);
+
+        setStudent((prev) => prev ? {
+          ...prev,
+          attendance_type: resolvedType === 'online' ? 'online' : 'offline',
+          has_voted_online: hasVoted,
+        } : null);
+
+        if (resolvedType === 'online') {
           // Jika mahasiswa online dan belum mencoblos -> Buka Bilik Suara Digital!
-          if (!student.has_voted_online) {
+          if (!hasVoted) {
             toast.info('Identitas terverifikasi sebagai Mahasiswa Online. Membuka Bilik Suara Digital...', {
-              duration: 3000,
+              duration: 3500,
             });
+            setSuccessReceipt(null);
             await loadVotingBooth(student.nim);
             return;
           }
@@ -298,8 +309,8 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
           date: formatDate(new Date()),
           status,
           activeDay: result.activeDay || currentDay,
-          attendance_type: student.attendance_type || 'offline',
-          has_voted_online: Boolean(student.has_voted_online),
+          attendance_type: resolvedType === 'online' ? 'online' : 'offline',
+          has_voted_online: hasVoted,
         });
       } else {
         setSubmitError(result.error || 'Gagal mengirim presensi.');
@@ -800,6 +811,39 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
             </div>
           )}
 
+          {/* Akses Cepat Bilik Suara untuk Mahasiswa Online */}
+          {successReceipt.role === 'peserta' && successReceipt.attendance_type === 'online' && !successReceipt.has_voted_online && (
+            <div className="p-4 bg-purple-50 border-2 border-purple-300 rounded-2xl text-left max-w-md mx-auto space-y-3 shadow-md animate-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shrink-0">
+                  <Vote size={18} />
+                </span>
+                <div>
+                  <h4 className="font-bold text-sm text-purple-950">
+                    Bilik Suara Digital (E-Voting) Siap!
+                  </h4>
+                  <p className="text-[11px] text-purple-700">
+                    Anda terdaftar sebagai Mahasiswa Online. Silakan salurkan hak suara Anda secara rahasia dan sah.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (successReceipt.nim) {
+                    loadVotingBooth(successReceipt.nim);
+                  }
+                }}
+                disabled={loadingBooth}
+                className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer active:scale-[0.99]"
+              >
+                {loadingBooth ? <Loader2 size={16} className="animate-spin" /> : <Vote size={16} />}
+                <span>Masuk ke Bilik Suara Digital (E-Voting) Sekarang →</span>
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={handleResetForm}
@@ -887,35 +931,37 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
             {/* BADGE DETEKSI ONLINE VS OFFLINE */}
             {student && (
               <div className={`mt-2 p-2.5 rounded-xl border flex items-center justify-between text-xs animate-in fade-in duration-200 ${
-                student.attendance_type === 'online'
+                String(student.attendance_type || '').toLowerCase() === 'online'
                   ? 'bg-purple-50/80 border-purple-200 text-purple-900'
                   : 'bg-blue-50/80 border-blue-200 text-blue-900'
               }`}>
                 <div className="flex items-center gap-2">
-                  {student.attendance_type === 'online' ? (
+                  {String(student.attendance_type || '').toLowerCase() === 'online' ? (
                     <Globe size={16} className="text-purple-600 shrink-0" />
                   ) : (
                     <Building size={16} className="text-blue-600 shrink-0" />
                   )}
                   <div>
                     <span className="font-bold block">
-                      {student.attendance_type === 'online'
+                      {String(student.attendance_type || '').toLowerCase() === 'online'
                         ? 'Mahasiswa Online (E-Voting Digital)'
                         : 'Mahasiswa Offline (Presensi Tatap Muka)'}
                     </span>
                     <span className="text-[10px] text-gray-500">
-                      {student.attendance_type === 'online'
-                        ? 'Setelah presensi, Anda akan langsung diarahkan ke Bilik Suara E-Voting.'
+                      {String(student.attendance_type || '').toLowerCase() === 'online'
+                        ? (student.has_voted_online
+                            ? '✅ Anda telah menggunakan hak suara E-Voting.'
+                            : 'Setelah presensi, Anda akan langsung diarahkan ke Bilik Suara E-Voting.')
                         : 'Mencoblos langsung menggunakan surat suara fisik di TPS.'}
                     </span>
                   </div>
                 </div>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase shrink-0 ${
-                  student.attendance_type === 'online'
+                  String(student.attendance_type || '').toLowerCase() === 'online'
                     ? 'bg-purple-200 text-purple-800'
                     : 'bg-blue-200 text-blue-800'
                 }`}>
-                  {student.attendance_type === 'online' ? 'Online' : 'Offline'}
+                  {String(student.attendance_type || '').toLowerCase() === 'online' ? 'Online' : 'Offline'}
                 </span>
               </div>
             )}
@@ -930,10 +976,14 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
                 </div>
 
                 {/* Tombol Masuk Bilik Suara jika mahasiswa online dan belum mencoblos */}
-                {student?.attendance_type === 'online' && !student.has_voted_online && (
+                {Boolean(student) && String(student?.attendance_type || '').toLowerCase() === 'online' && !student?.has_voted_online && (
                   <button
                     type="button"
-                    onClick={() => loadVotingBooth(student.nim)}
+                    onClick={() => {
+                      if (student?.nim) {
+                        loadVotingBooth(student.nim);
+                      }
+                    }}
                     disabled={loadingBooth}
                     className="w-full py-2 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
                   >
@@ -1037,44 +1087,60 @@ export default function AttendanceForm({ lecturers = [] }: AttendanceFormProps) 
           )}
 
           {/* SUBMIT BUTTON */}
-          <button
-            type="submit"
-            disabled={!student || isSubmitting || !!alreadyCheckedIn || (timeLock?.enabled && !timeLock.isOpen)}
-            className={`w-full py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all ${
-              !student || alreadyCheckedIn || (timeLock?.enabled && !timeLock.isOpen)
-                ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                : student?.attendance_type === 'online'
-                ? 'bg-purple-600 hover:bg-purple-700 text-white active:scale-[0.99] cursor-pointer'
-                : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white active:scale-[0.99] cursor-pointer'
-            }`}
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 size={18} className="animate-spin" />
-                <span>Mencatat Presensi...</span>
-              </>
-            ) : timeLock?.enabled && !timeLock.isOpen ? (
-              <>
-                <Clock size={18} />
-                <span>Presensi Sedang Ditutup</span>
-              </>
-            ) : alreadyCheckedIn ? (
-              <>
-                <Check size={18} />
-                <span>Presensi Hari Ini Selesai</span>
-              </>
-            ) : student?.attendance_type === 'online' ? (
-              <>
-                <Vote size={18} />
-                <span>Presensi & Buka Bilik Suara Digital</span>
-              </>
-            ) : (
-              <>
-                <Send size={16} />
-                <span>Kirim Presensi Sekarang</span>
-              </>
-            )}
-          </button>
+          {alreadyCheckedIn && String(student?.attendance_type || '').toLowerCase() === 'online' && !student?.has_voted_online ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (student?.nim) {
+                  loadVotingBooth(student.nim);
+                }
+              }}
+              disabled={loadingBooth}
+              className="w-full py-3.5 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white shadow-md transition-all cursor-pointer active:scale-[0.99]"
+            >
+              {loadingBooth ? <Loader2 size={18} className="animate-spin" /> : <Vote size={18} />}
+              <span>Anda Sudah Presensi • Masuk ke Bilik Suara Digital (E-Voting) →</span>
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!student || isSubmitting || !!alreadyCheckedIn || (timeLock?.enabled && !timeLock.isOpen)}
+              className={`w-full py-3 px-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all ${
+                !student || alreadyCheckedIn || (timeLock?.enabled && !timeLock.isOpen)
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : student?.attendance_type === 'online'
+                  ? 'bg-purple-600 hover:bg-purple-700 text-white active:scale-[0.99] cursor-pointer'
+                  : 'bg-[#2563EB] hover:bg-[#1D4ED8] text-white active:scale-[0.99] cursor-pointer'
+              }`}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={18} className="animate-spin" />
+                  <span>Mencatat Presensi...</span>
+                </>
+              ) : timeLock?.enabled && !timeLock.isOpen ? (
+                <>
+                  <Clock size={18} />
+                  <span>Presensi Sedang Ditutup</span>
+                </>
+              ) : alreadyCheckedIn ? (
+                <>
+                  <Check size={18} />
+                  <span>Presensi Hari Ini Selesai</span>
+                </>
+              ) : student?.attendance_type === 'online' ? (
+                <>
+                  <Vote size={18} />
+                  <span>Presensi & Buka Bilik Suara Digital</span>
+                </>
+              ) : (
+                <>
+                  <Send size={16} />
+                  <span>Kirim Presensi Sekarang</span>
+                </>
+              )}
+            </button>
+          )}
         </form>
       ) : (
         /* ========================================================
