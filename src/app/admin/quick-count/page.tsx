@@ -45,6 +45,11 @@ export default function QuickCountPage() {
   const [isLocked, setIsLocked] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
+  // Status sinkronisasi cloud: 'saved' | 'saving' | 'pending' | 'error'
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'pending' | 'error'>('saved');
+  const hasLocalEditsRef = useRef<boolean>(false);
+  const audioCtxRef = useRef<any>(null);
+
   // Refs to prevent race conditions on fast spam-clicks and prevent polling overwrites
   const latestCandidatesRef = useRef<QuickCountCandidate[]>([]);
   const latestInvalidRef = useRef<number>(0);
@@ -101,35 +106,55 @@ export default function QuickCountPage() {
   const [formTagline, setFormTagline] = useState('');
   const [formPhoto, setFormPhoto] = useState('');
 
+  // Singleton AudioContext helper to prevent memory leak and browser audio limits on fast spam clicks
+  const getAudioContext = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          audioCtxRef.current = new AudioCtx();
+        }
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current;
+    } catch (e) {
+      return null;
+    }
+  };
+
   // Sound effect generator using Web Audio API
   const playClickSound = (type: 'add' | 'sub' | 'win') => {
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
 
+      const now = ctx.currentTime;
       if (type === 'add') {
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1); // A5
-        gain.gain.setValueAtTime(0.15, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.12);
+        osc.frequency.setValueAtTime(587.33, now); // D5
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.08); // A5
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
       } else if (type === 'sub') {
-        osc.frequency.setValueAtTime(329.63, ctx.currentTime); // E4
-        gain.gain.setValueAtTime(0.15, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.1);
+        osc.frequency.setValueAtTime(329.63, now); // E4
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        osc.start(now);
+        osc.stop(now + 0.08);
       } else if (type === 'win') {
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-        osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.25); // C6
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
+        osc.frequency.setValueAtTime(523.25, now); // C5
+        osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.2); // C6
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc.start(now);
+        osc.stop(now + 0.25);
       }
     } catch (e) {
       // Audio not supported or blocked
@@ -137,27 +162,56 @@ export default function QuickCountPage() {
   };
 
   const fetchQuickCount = async (silent = false) => {
-    // Abaikan polling background jika admin sedang aktif klik dalam 4 detik terakhir
-    if (silent && Date.now() - lastActionTimeRef.current < 4000) {
-      return;
-    }
     if (!silent) setRefreshing(true);
     try {
-      const res = await fetch(`/api/admin/quick-count?date=${date}`);
+      const res = await fetch(`/api/admin/quick-count?date=${date}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       const data = await res.json();
       if (res.ok && data.success) {
-        if (silent && Date.now() - lastActionTimeRef.current < 4000) {
-          return;
-        }
-        const serverCandidates = data.config.candidates || [];
-        const serverInvalid = data.config.invalid_votes || 0;
+        const serverCandidates: QuickCountCandidate[] = data.config.candidates || [];
+        const serverInvalid = Number(data.config.invalid_votes) || 0;
         const serverNotes = data.config.notes || '';
         const serverLocked = Boolean(data.config.is_locked);
 
+        // JIKA BACKGROUND POLLING (silent === true):
+        // JANGAN PERNAH menimpa data paslon lokal yang sedang dihitung admin di tab ini!
+        // Polling background HANYA memperbarui metrik kehadiran, bilik suara, dan agregat online.
+        if (silent) {
+          const curValid = latestCandidatesRef.current.reduce((s, c) => s + (c.votes || 0), 0);
+          const curBallots = curValid + latestInvalidRef.current;
+          const curVotedVoters = data.stats?.votedVotersCount || 0;
+          const curDisc = curBallots - curVotedVoters;
+
+          setStats((prev) => ({
+            ...prev,
+            ...data.stats,
+            totalValidVotes: curValid,
+            totalInvalidVotes: latestInvalidRef.current,
+            totalBallotsCounted: curBallots,
+            discrepancy: curDisc,
+            isBalanced: curDisc === 0,
+          }));
+
+          if (data.onlineStats) {
+            setOnlineStats(data.onlineStats);
+          }
+          return;
+        }
+
+        // JIKA MANUAL REFRESH DENGAN TOMBOL "Segarkan" DAN ADA PERUBAHAN LOKAL BELUM TERSIMPAN:
+        if (hasLocalEditsRef.current && candidates.length > 0) {
+          await executeSave();
+          return;
+        }
+
+        // INITIAL LOAD ATAU MANUAL REFRESH BERSIH:
         latestCandidatesRef.current = serverCandidates;
         latestInvalidRef.current = serverInvalid;
         latestNotesRef.current = serverNotes;
         latestLockedRef.current = serverLocked;
+        hasLocalEditsRef.current = false;
 
         setCandidates(serverCandidates);
         setInvalidVotes(serverInvalid);
@@ -165,6 +219,7 @@ export default function QuickCountPage() {
         setIsLocked(serverLocked);
         setLastUpdated(data.config.updated_at);
         setStats(data.stats);
+        setSaveStatus('saved');
         if (data.onlineStats) {
           setOnlineStats(data.onlineStats);
         }
@@ -266,11 +321,27 @@ export default function QuickCountPage() {
     }
   };
 
+  // Initial load
   useEffect(() => {
-    fetchQuickCount();
+    // Cek apakah ada backup lokal darurat jika refresh terjadi
+    try {
+      const backupStr = localStorage.getItem('himasi_qc_local_backup');
+      if (backupStr) {
+        const backup = JSON.parse(backupStr);
+        if (backup && Array.isArray(backup.candidates) && backup.candidates.length > 0) {
+          latestCandidatesRef.current = backup.candidates;
+          latestInvalidRef.current = Number(backup.invalid_votes) || 0;
+          setCandidates(backup.candidates);
+          setInvalidVotes(Number(backup.invalid_votes) || 0);
+        }
+      }
+    } catch (e) {}
+
+    fetchQuickCount(false);
   }, [date]);
 
-  // Periodic polling every 12 seconds
+  // Periodic polling background every 12 seconds
+  // HANYA mengupdate DPT, jumlah hadir, bilik suara, dan agregat online (tidak menimpa paslon lokal)
   useEffect(() => {
     const interval = setInterval(() => {
       fetchQuickCount(true);
@@ -278,8 +349,26 @@ export default function QuickCountPage() {
     return () => clearInterval(interval);
   }, [date]);
 
+  // Cleanup & safety on page unload
   useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (hasLocalEditsRef.current || isSavingRef.current) {
+        try {
+          const payload = JSON.stringify({
+            candidates: latestCandidatesRef.current,
+            invalid_votes: latestInvalidRef.current,
+            notes: latestNotesRef.current,
+            is_locked: latestLockedRef.current,
+          });
+          navigator.sendBeacon?.('/api/admin/quick-count', new Blob([payload], { type: 'application/json' }));
+        } catch (e) {}
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
@@ -294,6 +383,7 @@ export default function QuickCountPage() {
     }
     isSavingRef.current = true;
     pendingSaveRef.current = false;
+    setSaveStatus('saving');
 
     const payload = {
       candidates: latestCandidatesRef.current,
@@ -310,13 +400,25 @@ export default function QuickCountPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        setSaveStatus('saved');
+        hasLocalEditsRef.current = false;
+        try {
+          localStorage.setItem('himasi_qc_local_backup', JSON.stringify({
+            candidates: latestCandidatesRef.current,
+            invalid_votes: latestInvalidRef.current,
+            notes: latestNotesRef.current,
+            updatedAt: Date.now(),
+          }));
+        } catch (e) {}
         return true;
       } else {
-        toast.error(data.error || 'Gagal menyimpan perubahan');
+        setSaveStatus('error');
+        toast.error(data.error || 'Gagal menyimpan perubahan ke cloud');
         return false;
       }
     } catch (e) {
-      toast.error('Gagal memperbarui data');
+      setSaveStatus('error');
+      toast.error('Koneksi internet lambat, hitungan tetap aman tersimpan di browser');
       return false;
     } finally {
       isSavingRef.current = false;
@@ -328,12 +430,15 @@ export default function QuickCountPage() {
   };
 
   const scheduleDebouncedSave = () => {
+    setSaveStatus('pending');
+    hasLocalEditsRef.current = true;
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
+    // Jeda tenang 1.2 detik setelah klik terakhir selesai sebelum kirim ke cloud
     saveTimeoutRef.current = setTimeout(() => {
       executeSave();
-    }, 250);
+    }, 1200);
   };
 
   const saveQuickCountState = async (
@@ -360,6 +465,16 @@ export default function QuickCountPage() {
       discrepancy: disc,
       isBalanced: disc === 0,
     }));
+
+    // Simpan ke localStorage
+    try {
+      localStorage.setItem('himasi_qc_local_backup', JSON.stringify({
+        candidates: newCandidates,
+        invalid_votes: newInvalid,
+        notes: newNotes,
+        updatedAt: Date.now(),
+      }));
+    } catch (e) {}
 
     return await executeSave();
   };
@@ -397,6 +512,16 @@ export default function QuickCountPage() {
       isBalanced: disc === 0,
     }));
 
+    // Simpan backup instan ke localStorage
+    try {
+      localStorage.setItem('himasi_qc_local_backup', JSON.stringify({
+        candidates: updated,
+        invalid_votes: latestInvalidRef.current,
+        notes: latestNotesRef.current,
+        updatedAt: Date.now(),
+      }));
+    } catch (e) {}
+
     scheduleDebouncedSave();
   };
 
@@ -423,6 +548,16 @@ export default function QuickCountPage() {
       discrepancy: disc,
       isBalanced: disc === 0,
     }));
+
+    // Simpan backup instan ke localStorage
+    try {
+      localStorage.setItem('himasi_qc_local_backup', JSON.stringify({
+        candidates: latestCandidatesRef.current,
+        invalid_votes: nextInvalid,
+        notes: latestNotesRef.current,
+        updatedAt: Date.now(),
+      }));
+    } catch (e) {}
 
     scheduleDebouncedSave();
   };
@@ -589,6 +724,32 @@ export default function QuickCountPage() {
             ) : (
               <span className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
                 <Unlock className="w-3 h-3" /> Hitung Aktif
+              </span>
+            )}
+
+            {/* Live Cloud Save Status Badge */}
+            {saveStatus === 'saving' && (
+              <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-medium">
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
+                <span>Menyimpan ke Cloud...</span>
+              </span>
+            )}
+            {saveStatus === 'pending' && (
+              <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                <span>Jeda Simpan Cloud...</span>
+              </span>
+            )}
+            {saveStatus === 'saved' && (
+              <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium">
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <span>Tersimpan Cloud</span>
+              </span>
+            )}
+            {saveStatus === 'error' && (
+              <span className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 font-medium">
+                <AlertTriangle className="w-3 h-3 text-rose-400" />
+                <span>Aman di Browser (Offline)</span>
               </span>
             )}
           </div>

@@ -6,6 +6,9 @@ import { getAuthClient } from '@/lib/googleSheets';
 import { google } from 'googleapis';
 import { getOnlineVotingStats, resetAllOnlineVotes } from '@/lib/onlineVoting';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const DEFAULT_CANDIDATES: QuickCountCandidate[] = [
   {
     id: 'paslon-1',
@@ -97,6 +100,12 @@ export async function GET(request: NextRequest) {
         totalBallotsCounted, // Total kertas suara dihitung
         discrepancy, // 0 = 100% klop
         isBalanced: discrepancy === 0,
+      },
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       },
     });
   } catch (error: any) {
@@ -425,10 +434,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: Save Tally and Candidate Settings
+    const existingCandidates: QuickCountCandidate[] = extraTexts.quick_count?.candidates || DEFAULT_CANDIDATES;
+    let finalCandidates: QuickCountCandidate[] = existingCandidates;
+
+    if (Array.isArray(candidates) && candidates.length > 0) {
+      finalCandidates = candidates.map((c: any) => {
+        const exist = existingCandidates.find((ex) => ex.id === c.id || ex.number === c.number);
+        return {
+          ...exist,
+          ...c,
+          votes: Math.max(0, Number(c.votes) || 0),
+        };
+      });
+    }
+
     const updatedQuickCount: QuickCountConfig = {
-      candidates: candidates || extraTexts.quick_count?.candidates || DEFAULT_CANDIDATES,
-      invalid_votes: invalid_votes !== undefined ? Number(invalid_votes) : extraTexts.quick_count?.invalid_votes || 0,
-      notes: notes !== undefined ? notes : extraTexts.quick_count?.notes || '',
+      candidates: finalCandidates,
+      invalid_votes: invalid_votes !== undefined ? Math.max(0, Number(invalid_votes)) : extraTexts.quick_count?.invalid_votes || 0,
+      notes: notes !== undefined ? String(notes) : extraTexts.quick_count?.notes || '',
       is_locked: is_locked !== undefined ? Boolean(is_locked) : extraTexts.quick_count?.is_locked || false,
       updated_at: nowWib,
     };
@@ -454,6 +477,10 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'Data Quick Count berhasil disimpan!',
       quickCount: updatedQuickCount,
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache',
+      },
     });
   } catch (error: any) {
     console.error('Quick count POST error:', error);
