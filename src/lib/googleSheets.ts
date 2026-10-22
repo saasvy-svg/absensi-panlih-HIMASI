@@ -23,16 +23,21 @@ export function getColumnLetter(colIndex: number): string {
 
 /**
  * Builds Model B matrix table headers dynamically based on configured days:
- * [No, NIM / NIP, Nama Lengkap, Angkatan, Hari 1 (tgl), Hari 2 (tgl), ..., Total Hadir, Catatan / Alasan, Sinkron Terakhir]
+ * [No, NIM / NIP, Nama Lengkap, Angkatan, Tipe Presensi, 21/10/2026, 23/10/2026, ..., Total Hadir, Catatan / Alasan, Sinkron Terakhir]
  */
 export function buildModelBHeaders(days: DayConfigItem[]): string[] {
-  const baseHeaders = ['No', 'NIM / NIP', 'Nama Lengkap', 'Angkatan'];
+  const baseHeaders = ['No', 'NIM / NIP', 'Nama Lengkap', 'Angkatan', 'Tipe Presensi'];
 
   const dayHeaders = days.map((d) => {
+    // Jika label berupa tanggal atau kustom (bukan generic 'Hari X'), gunakan label
+    if (d.label && !d.label.toLowerCase().startsWith('hari ')) {
+      return d.label;
+    }
     const dateParts = (d.date || '').split('-');
-    const shortDate =
-      dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}` : d.date;
-    return `Hari ${d.dayNumber} (${shortDate})`;
+    if (dateParts.length === 3) {
+      return `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`; // cth: '21/10/2026'
+    }
+    return d.date || d.label || 'Tanggal';
   });
 
   const trailingHeaders = ['Total Hadir', 'Catatan / Alasan', 'Sinkron Terakhir'];
@@ -205,7 +210,7 @@ export async function applyModelBHeaderStyles(
   const startColIndex = 1; // Column B is index 1
   const endColIndex = startColIndex + totalColumns;
 
-  const dayStartColIndex = 5; // Column F (index 5) is first Day column
+  const dayStartColIndex = 6; // Column G (index 6) is first Day column (after No, NIM, Nama, Angkatan, Tipe Presensi)
   const dayEndColIndex = dayStartColIndex + daysCount;
 
   const requests: any[] = [
@@ -865,11 +870,12 @@ async function syncSingleTab(
   sheetId: string,
   sheetNumericId: number,
   tabName: string,
-  roster: { nim: string; name: string; class_name: string }[],
+  roster: { nim: string; name: string; class_name: string; attendance_type?: string }[],
   attendances: any[],
   targetDate: string,
   isDosenTab: boolean,
-  days: DayConfigItem[]
+  days: DayConfigItem[],
+  onlineMembers: Record<string, 'online' | 'offline'> = {}
 ) {
   const roleLabel = isDosenTab ? 'Dosen' : 'Mahasiswa';
 
@@ -926,11 +932,26 @@ async function syncSingleTab(
     if (att.name) dateMap.set(String(att.name).trim().toUpperCase(), att);
   }
 
-  // ── 3. LEFT ZONE: Model B Matrix (B → J/K) ───────────────────────────────
+  // ── 3. LEFT ZONE: Model B Matrix (B → ...) ───────────────────────────────
   const headers = buildModelBHeaders(days);
-  const totalCols = headers.length; // 9 for 2 days
-  const matrixEndColLetter = getColumnLetter(totalCols); // Col J for 9 cols
-  const matrixEndColIdx = totalCols + 1; // 10 (exclusive)
+  const totalCols = headers.length; // e.g. baseCols (5) + days.length + trailingCols (3)
+  const matrixEndColIdx = 1 + totalCols; // 0-based exclusive for left matrix (Col B is 1)
+  const matrixEndColLetter = getColumnLetter(matrixEndColIdx - 1);
+
+  const baseCols = 5; // B: No (1), C: NIM (2), D: Nama (3), E: Angkatan (4), F: Tipe Presensi (5)
+  const dayStartIdx = 1 + baseCols; // Index 6 (Col G)
+  const dayEndIdx = dayStartIdx + days.length;
+  const totalHadirColIdx = dayEndIdx;
+  const notesColIdx = totalHadirColIdx + 1;
+  const syncColIdx = notesColIdx + 1;
+
+  // Gap & Right Zone (Dynamically shifted so they NEVER overlap!)
+  const gapColIdx = matrixEndColIdx;
+  const rightStartIdx = gapColIdx + 1;
+  const rightCols = 5; // No, Jam Masuk, NIM, Nama, Status
+  const rightEndIdx = rightStartIdx + rightCols;
+  const rightStartLetter = getColumnLetter(rightStartIdx);
+  const rightEndLetter = getColumnLetter(rightEndIdx - 1);
 
   // Title (B2) + Subtitle (B3) + Column Headers (B4)
   await sheets.spreadsheets.values.update({
@@ -954,6 +975,9 @@ async function syncSingleTab(
     const s = roster[i];
     const nimKey = String(s.nim || '').trim().toUpperCase();
     const nameKey = String(s.name || '').trim().toUpperCase();
+
+    const rawType = s.attendance_type || onlineMembers[nimKey] || onlineMembers[nameKey] || (isDosenTab ? 'dosen' : 'offline');
+    const attType = String(rawType).toUpperCase() === 'ONLINE' ? 'ONLINE' : (isDosenTab ? 'DOSEN' : 'OFFLINE');
 
     const dayValues = days.map((d) => {
       const dateMap = attByNimByDate.get(d.date);
@@ -988,6 +1012,7 @@ async function syncSingleTab(
       s.nim,
       s.name,
       normalizeAngkatan(s.class_name),
+      attType,
       ...dayValues,
       `${attendedCount} / ${days.length} Hari`,
       notes,
@@ -1007,14 +1032,7 @@ async function syncSingleTab(
     });
   }
 
-  // ── 4. RIGHT ZONE: Attendance Tables (L → P) ─────────────────────────────
-  const rightStartIdx = 11; // Column L is index 11 (0-indexed: A=0, B=1 ... K=10, L=11)
-  const rightCols = 5;      // L=No, M=Jam, N=NIM, O=Nama, P=Status
-  const rightEndIdx = rightStartIdx + rightCols; // 16 (exclusive)
-  const rightStartLetter = getColumnLetter(rightStartIdx);     // 'L'
-  const rightEndLetter = getColumnLetter(rightStartIdx + rightCols - 1); // 'P'
-  const gapColIdx = 10; // Column K is index 10 (Gap column)
-
+  // ── 4. RIGHT ZONE: Attendance Tables ─────────────────────────────────────
   // Split roster into present / absent for target date
   const presentList: any[] = [];
   const absentList: any[] = [];
@@ -1098,8 +1116,6 @@ async function syncSingleTab(
 
   // ── 5. FORMATTING (Explicit Column Widths, Clean Heights, Crisp Colors) ──
   const daysCount = days.length;
-  const dayStartIdx = 5; // Column F (first day)
-  const dayEndIdx = dayStartIdx + daysCount;
   const dataStart0 = 4; // row 5 -> 0-indexed = 4
   const dataEnd0 = dataStart0 + matrixDataCount;
 
@@ -1118,17 +1134,18 @@ async function syncSingleTab(
     { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 2, endIndex: 3 }, properties: { pixelSize: 110 }, fields: 'pixelSize' } },  // C: NIM
     { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 3, endIndex: 4 }, properties: { pixelSize: 240 }, fields: 'pixelSize' } },  // D: Nama Lengkap
     { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 4, endIndex: 5 }, properties: { pixelSize: 110 }, fields: 'pixelSize' } },  // E: Angkatan
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 5, endIndex: 6 }, properties: { pixelSize: 125 }, fields: 'pixelSize' } },  // F: Hari 1
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 6, endIndex: 7 }, properties: { pixelSize: 125 }, fields: 'pixelSize' } },  // G: Hari 2
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 7, endIndex: 8 }, properties: { pixelSize: 95 }, fields: 'pixelSize' } },   // H: Total Hadir
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 8, endIndex: 9 }, properties: { pixelSize: 160 }, fields: 'pixelSize' } },  // I: Catatan / Alasan
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 9, endIndex: 10 }, properties: { pixelSize: 150 }, fields: 'pixelSize' } }, // J: Rekam Terakhir
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: gapColIdx, endIndex: gapColIdx + 1 }, properties: { pixelSize: 30 }, fields: 'pixelSize' } }, // K: Gap
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx, endIndex: rightStartIdx + 1 }, properties: { pixelSize: 45 }, fields: 'pixelSize' } },      // L: No
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 1, endIndex: rightStartIdx + 2 }, properties: { pixelSize: 115 }, fields: 'pixelSize' } },  // M: Jam Masuk
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 2, endIndex: rightStartIdx + 3 }, properties: { pixelSize: 110 }, fields: 'pixelSize' } },  // N: NIM
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 3, endIndex: rightStartIdx + 4 }, properties: { pixelSize: 240 }, fields: 'pixelSize' } },  // O: Nama Lengkap
-    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 4, endIndex: rightStartIdx + 5 }, properties: { pixelSize: 100 }, fields: 'pixelSize' } },  // P: Status
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: 5, endIndex: 6 }, properties: { pixelSize: 105 }, fields: 'pixelSize' } },  // F: Tipe Presensi
+    // Day/Date columns (dynamic)
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: dayStartIdx, endIndex: dayEndIdx }, properties: { pixelSize: 130 }, fields: 'pixelSize' } }, // Dates
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: totalHadirColIdx, endIndex: totalHadirColIdx + 1 }, properties: { pixelSize: 95 }, fields: 'pixelSize' } },   // Total Hadir
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: notesColIdx, endIndex: notesColIdx + 1 }, properties: { pixelSize: 160 }, fields: 'pixelSize' } },  // Catatan / Alasan
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: syncColIdx, endIndex: syncColIdx + 1 }, properties: { pixelSize: 150 }, fields: 'pixelSize' } }, // Sinkron Terakhir
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: gapColIdx, endIndex: gapColIdx + 1 }, properties: { pixelSize: 30 }, fields: 'pixelSize' } }, // Gap
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx, endIndex: rightStartIdx + 1 }, properties: { pixelSize: 45 }, fields: 'pixelSize' } },      // Right: No
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 1, endIndex: rightStartIdx + 2 }, properties: { pixelSize: 115 }, fields: 'pixelSize' } },  // Right: Jam Masuk
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 2, endIndex: rightStartIdx + 3 }, properties: { pixelSize: 110 }, fields: 'pixelSize' } },  // Right: NIM
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 3, endIndex: rightStartIdx + 4 }, properties: { pixelSize: 240 }, fields: 'pixelSize' } },  // Right: Nama Lengkap
+    { updateDimensionProperties: { range: { sheetId: sheetNumericId, dimension: 'COLUMNS', startIndex: rightStartIdx + 4, endIndex: rightStartIdx + 5 }, properties: { pixelSize: 100 }, fields: 'pixelSize' } },  // Right: Status
 
     // ── LEFT ZONE FORMATTING ──
 
@@ -1225,6 +1242,14 @@ async function syncSingleTab(
           fields: 'userEnteredFormat.horizontalAlignment',
         },
       },
+      // Left: Nama Lengkap (D=3)
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: 3, endColumnIndex: 4 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
+        },
+      },
       // Center+bold: Angkatan (E=4)
       {
         repeatCell: {
@@ -1233,7 +1258,15 @@ async function syncSingleTab(
           fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
         },
       },
-      // Center+bold: Day columns (Col F onwards)
+      // Center+bold: Tipe Presensi (F=5)
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: 5, endColumnIndex: 6 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', textFormat: { bold: true } } },
+          fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
+        },
+      },
+      // Center+bold: Day columns (Col G onwards)
       {
         repeatCell: {
           range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: dayStartIdx, endColumnIndex: dayEndIdx },
@@ -1241,12 +1274,28 @@ async function syncSingleTab(
           fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
         },
       },
-      // Center: Total Hadir
+      // Center+bold: Total Hadir
       {
         repeatCell: {
-          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: 7, endColumnIndex: 8 },
+          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: totalHadirColIdx, endColumnIndex: totalHadirColIdx + 1 },
           cell: { userEnteredFormat: { horizontalAlignment: 'CENTER', textFormat: { bold: true } } },
           fields: 'userEnteredFormat(horizontalAlignment,textFormat.bold)',
+        },
+      },
+      // Left: Catatan / Alasan
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: notesColIdx, endColumnIndex: notesColIdx + 1 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'LEFT' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
+        },
+      },
+      // Center: Sinkron Terakhir
+      {
+        repeatCell: {
+          range: { sheetId: sheetNumericId, startRowIndex: dataStart0, endRowIndex: dataEnd0, startColumnIndex: syncColIdx, endColumnIndex: syncColIdx + 1 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'CENTER' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
         },
       },
       // Row height (26px)
@@ -1485,11 +1534,13 @@ export async function syncCategorizedWithMasterRoster(
   dayOptions?: {
     days?: DayConfigItem[];
     activeDay?: number | 'auto';
+    onlineMembers?: Record<string, 'online' | 'offline'>;
   }
 ) {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: 'v4', auth });
   const days = dayOptions?.days && dayOptions.days.length > 0 ? dayOptions.days : getDaysList();
+  const onlineMembers = dayOptions?.onlineMembers || {};
 
   tabNumericIdCache.clear();
 
@@ -1576,11 +1627,16 @@ export async function syncCategorizedWithMasterRoster(
   };
 
   // ── Group students by Angkatan ──────────────────────────────────────────
-  const groups: Record<string, { nim: string; name: string; class_name: string }[]> = {};
+  const groups: Record<string, { nim: string; name: string; class_name: string; attendance_type?: string }[]> = {};
   for (const s of allStudents) {
     const tabName = normalizeAngkatan(s.class_name);
     if (!groups[tabName]) groups[tabName] = [];
-    groups[tabName].push({ nim: s.nim, name: s.name, class_name: tabName });
+    groups[tabName].push({
+      nim: s.nim,
+      name: s.name,
+      class_name: tabName,
+      attendance_type: s.attendance_type,
+    });
   }
 
   const results: { tabName: string; count: number }[] = [];
@@ -1589,7 +1645,7 @@ export async function syncCategorizedWithMasterRoster(
   for (const [groupName, roster] of Object.entries(groups)) {
     const { numericId, title } = await getOrCreateTab(groupName);
     const res = await syncSingleTab(
-      sheets, sheetId, numericId, title, roster, attendances, date, false, days
+      sheets, sheetId, numericId, title, roster, attendances, date, false, days, onlineMembers
     );
     results.push({ tabName: title, count: res.presentCount + res.absentCount });
   }
@@ -1603,11 +1659,12 @@ export async function syncCategorizedWithMasterRoster(
         nim: `DOSEN 0${i + 1}`.slice(-8),
         name: n as string,
         class_name: 'Dosen',
+        attendance_type: 'dosen',
       }));
 
     const { numericId, title } = await getOrCreateTab('Dosen', { red: 0.15, green: 0.35, blue: 0.65 });
     const res = await syncSingleTab(
-      sheets, sheetId, numericId, title, dosenRoster, attendances, date, true, days
+      sheets, sheetId, numericId, title, dosenRoster, attendances, date, true, days, onlineMembers
     );
     results.push({ tabName: title, count: res.presentCount + res.absentCount });
   }

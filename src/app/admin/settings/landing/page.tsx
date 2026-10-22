@@ -1130,15 +1130,15 @@ export default function LandingSettingsPage() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[11px]">
                   <div className="bg-white p-2.5 rounded-lg border border-blue-200 text-blue-900">
-                    <span className="font-bold block">Kolom B - E: Identitas Master</span>
-                    <span className="text-gray-500 text-[10px]">No, NIM / NIP, Nama Lengkap, Angkatan</span>
+                    <span className="font-bold block">Kolom B - F: Identitas Master</span>
+                    <span className="text-gray-500 text-[10px]">No, NIM / NIP, Nama Lengkap, Angkatan, Tipe Presensi (Online/Offline)</span>
                   </div>
                   <div className="bg-white p-2.5 rounded-lg border border-emerald-300 text-emerald-900">
                     <span className="font-bold block">
-                      Kolom F s/d {String.fromCharCode(70 + daysList.length - 1)}: Kolom Hari
+                      Kolom G s/d {String.fromCharCode(71 + daysList.length - 1)}: Kolom Tanggal
                     </span>
                     <span className="text-gray-500 text-[10px]">
-                      {daysList.map(d => `${d.label || `Hari ${d.dayNumber}`}`).join(' • ')} (Hadir / Izin / Sakit / -)
+                      {daysList.map(d => `${d.date || d.label || `Hari ${d.dayNumber}`}`).join(' • ')} (Otomatis bertambah jika ada tanggal baru)
                     </span>
                   </div>
                   <div className="bg-white p-2.5 rounded-lg border border-purple-200 text-purple-900">
@@ -1146,8 +1146,8 @@ export default function LandingSettingsPage() {
                     <span className="text-gray-500 text-[10px]">Otomatis dihitung (cth: "1 / {daysList.length} Hari")</span>
                   </div>
                   <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-slate-700">
-                    <span className="font-bold block">Kolom Terakhir:</span>
-                    <span className="text-gray-500 text-[10px]">Catatan / Alasan & Waktu Sinkron Terakhir</span>
+                    <span className="font-bold block">Kolom Kanan Terpisah:</span>
+                    <span className="text-gray-500 text-[10px]">Daftar Hadir & Belum Hadir Sesi Aktif</span>
                   </div>
                 </div>
               </div>

@@ -25,18 +25,56 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Ambil konfigurasi landing settings (dosen, tanggal Hari 1 & Hari 2)
+    // 2. Ambil konfigurasi landing settings & tanggal-tanggal yang ada
     const { data: landingData } = await supabase
       .from('landing_settings')
       .select('extra_texts')
       .maybeSingle();
 
-    const extraTexts = landingData?.extra_texts;
-    const dayResolution = resolveActiveDay(extraTexts, date);
-    const days = dayResolution.days;
-    const day1Date = dayResolution.day1Date;
-    const day2Date = dayResolution.day2Date;
-    const lecturers: string[] = extraTexts?.lecturers || [];
+    const extraTexts = landingData?.extra_texts || {};
+    const lecturers: string[] = extraTexts.lecturers || [];
+    const onlineMembers: Record<string, 'online' | 'offline'> = extraTexts.online_members || {};
+
+    // Ambil seluruh tanggal unik yang pernah memiliki catatan presensi
+    const { data: distinctAtts } = await supabase
+      .from('attendances')
+      .select('attendance_date');
+
+    const historicalDates = Array.from(new Set(
+      (distinctAtts || []).map((a) => a.attendance_date).filter(Boolean)
+    )) as string[];
+
+    // Kumpulkan tanggal dari konfigurasi
+    const configuredDaysList = extraTexts.days || [];
+    const configuredDates = [
+      ...configuredDaysList.map((d: any) => d.date),
+      extraTexts.day1_date,
+      extraTexts.day2_date,
+    ].filter(Boolean) as string[];
+
+    // Target tanggal sesi yang sedang disinkronkan
+    const targetDate = date !== 'all' ? date : getWIBDate();
+
+    // Gabungkan seluruh tanggal unik secara urut (cth: '2026-10-21', '2026-10-23')
+    const allUniqueDates = Array.from(new Set([
+      ...historicalDates,
+      ...configuredDates,
+      targetDate
+    ])).filter((d) => d && d !== 'all').sort();
+
+    // Susun daftar hari/tanggal dinamis (jika ada tanggal baru, otomatis nambah kolom)
+    const days = allUniqueDates.map((dStr, idx) => {
+      const configured = configuredDaysList.find((d: any) => d.date === dStr);
+      const parts = dStr.split('-');
+      const formatted = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : dStr;
+      return {
+        dayNumber: idx + 1,
+        date: dStr,
+        label: configured?.label || formatted,
+      };
+    });
+
+    const dayResolution = resolveActiveDay(extraTexts, targetDate);
 
     // 3. Ambil seluruh data master mahasiswa aktif
     const { data: allStudents, error: studentError } = await supabase
@@ -49,24 +87,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: studentError.message }, { status: 500 });
     }
 
-    // 4. Ambil data absensi untuk seluruh hari yang dikonfigurasi
-    const configuredDates = Array.from(new Set([
-      ...days.map((d) => d.date),
-      dayResolution.day1Date,
-      dayResolution.day2Date,
-      ...(date !== 'all' ? [date] : [])
-    ])).filter(Boolean);
-
-    let query = supabase
+    // 4. Ambil data absensi untuk seluruh tanggal yang terdaftar (kemarin + besok dst)
+    const { data: attendances, error: attError } = await supabase
       .from('attendances')
       .select('*')
+      .in('attendance_date', allUniqueDates)
       .order('check_in_time', { ascending: true });
-
-    if (date !== 'all' && configuredDates.length > 0) {
-      query = query.in('attendance_date', configuredDates);
-    }
-
-    const { data: attendances, error: attError } = await query;
 
     if (attError) {
       return NextResponse.json({ error: attError.message }, { status: 500 });
@@ -80,21 +106,22 @@ export async function POST(request: NextRequest) {
         success: true,
         message: 'Belum ada data master mahasiswa, dosen, atau absensi untuk disinkronkan.',
         rowsSynced: 0,
-        date,
+        date: targetDate,
       });
     }
 
     // 5. Sinkronkan Roster Master Lengkap ke Tab Model B Matriks
-    // [No, NIM / NIP, Nama Lengkap, Angkatan, Hari 1, Hari 2, ..., Total Hadir, Catatan, Sinkron Terakhir]
+    // [No, NIM / NIP, Nama Lengkap, Angkatan, Tipe Presensi, 21/10/2026, 23/10/2026, ..., Total Hadir, Catatan, Sinkron Terakhir]
     const syncResults = await syncCategorizedWithMasterRoster(
       config.sheet_id,
       studentList,
       attendanceList,
-      date,
+      targetDate,
       lecturers,
       {
         days,
         activeDay: dayResolution.activeDay,
+        onlineMembers,
       }
     );
 
@@ -115,9 +142,10 @@ export async function POST(request: NextRequest) {
       totalPresent: attendanceList.length,
       tabs: syncResults,
       activeDay: dayResolution.activeDay,
-      day1Date,
-      day2Date,
-      date,
+      day1Date: dayResolution.day1Date,
+      day2Date: dayResolution.day2Date,
+      days,
+      date: targetDate,
     });
   } catch (error: any) {
     console.error('Sheets sync error:', error);
