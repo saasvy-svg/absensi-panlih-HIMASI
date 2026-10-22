@@ -1531,16 +1531,25 @@ export async function syncCategorizedWithMasterRoster(
   attendances: any[],
   date: string,
   lecturers: string[] = [],
-  dayOptions?: {
-    days?: DayConfigItem[];
-    activeDay?: number | 'auto';
-    onlineMembers?: Record<string, 'online' | 'offline'>;
-  }
+  dayOptions?:
+    | {
+        days?: DayConfigItem[];
+        activeDay?: number | 'auto';
+        onlineMembers?: Record<string, 'online' | 'offline'>;
+      }
+    | DayConfigItem[],
+  legacyOnlineMembers?: Record<string, 'online' | 'offline'>
 ) {
   const auth = getAuthClient();
   const sheets = google.sheets({ version: 'v4', auth });
-  const days = dayOptions?.days && dayOptions.days.length > 0 ? dayOptions.days : getDaysList();
-  const onlineMembers = dayOptions?.onlineMembers || {};
+
+  const rawDays = Array.isArray(dayOptions) ? dayOptions : dayOptions?.days;
+  const days = rawDays && rawDays.length > 0 ? rawDays : getDaysList();
+
+  const onlineMembers =
+    (!Array.isArray(dayOptions) ? dayOptions?.onlineMembers : undefined) ||
+    legacyOnlineMembers ||
+    {};
 
   tabNumericIdCache.clear();
 

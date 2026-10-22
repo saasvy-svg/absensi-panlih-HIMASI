@@ -55,12 +55,23 @@ export async function POST(request: NextRequest) {
     // Target tanggal sesi yang sedang disinkronkan
     const targetDate = date !== 'all' ? date : getWIBDate();
 
-    // Gabungkan seluruh tanggal unik secara urut (cth: '2026-10-21', '2026-10-23')
-    const allUniqueDates = Array.from(new Set([
-      ...historicalDates,
-      ...configuredDates,
-      targetDate
-    ])).filter((d) => d && d !== 'all').sort();
+    // Gabungkan seluruh tanggal pelaksanaan:
+    // 1. Tanggal yang memiliki riwayat presensi (historical)
+    // 2. Tanggal yang dikonfigurasi admin (configured)
+    // 3. targetDate HANYA jika memiliki presensi atau dikonfigurasi admin
+    const datesWithAttendance = new Set(historicalDates);
+    const validConfiguredDates = new Set(configuredDates);
+
+    const candidateDates = new Set([...historicalDates, ...configuredDates]);
+    if (datesWithAttendance.has(targetDate) || validConfiguredDates.has(targetDate)) {
+      candidateDates.add(targetDate);
+    }
+    // Jika belum ada konfigurasi maupun riwayat sama sekali, fallback ke targetDate
+    if (candidateDates.size === 0 && targetDate && targetDate !== 'all') {
+      candidateDates.add(targetDate);
+    }
+
+    const allUniqueDates = Array.from(candidateDates).filter((d) => d && d !== 'all').sort();
 
     // Susun daftar hari/tanggal dinamis (jika ada tanggal baru, otomatis nambah kolom)
     const days = allUniqueDates.map((dStr, idx) => {
