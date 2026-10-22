@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/admin';
 import { resetAttendanceInSheet } from '@/lib/googleSheets';
 import { resolveActiveDay } from '@/lib/dayHelper';
+import { removeStudentOnlineVote } from '@/lib/onlineVoting';
 
 export async function DELETE(request: NextRequest) {
   try {
@@ -46,6 +47,11 @@ export async function DELETE(request: NextRequest) {
 
     if (deleteError) {
       return NextResponse.json({ error: deleteError.message }, { status: 500 });
+    }
+
+    // Bersihkan juga hak suara / online vote mahasiswa ini jika ada (agar siap di-test kembali)
+    if (targetAttendance.nim) {
+      await removeStudentOnlineVote(targetAttendance.nim);
     }
 
     // 2. Tentukan sesi hari presensi (Hari 1, Hari 2, dst)

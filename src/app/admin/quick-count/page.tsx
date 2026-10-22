@@ -212,6 +212,33 @@ export default function QuickCountPage() {
     }
   };
 
+  const handleResetOnlineVotes = async () => {
+    if (isLocked) {
+      toast.error('Perhitungan suara sedang dikunci');
+      return;
+    }
+    if (!confirm('PERINGATAN TESTING: Reset seluruh suara online kembali ke 0? Mahasiswa online yang tadi sudah vote akan bisa mencoba mencoblos lagi.')) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/quick-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset_online_votes' }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success(data.message || 'Suara online berhasil direset ke 0!');
+        fetchQuickCount(false);
+      } else {
+        toast.error(data.error || 'Gagal mereset suara online');
+      }
+    } catch (e) {
+      toast.error('Gagal terhubung ke server');
+    }
+  };
+
   useEffect(() => {
     fetchQuickCount();
   }, [date]);
@@ -641,8 +668,8 @@ export default function QuickCountPage() {
             </div>
           </div>
 
-          {/* Merge / Unmerge Button */}
-          <div className="flex items-center gap-2">
+          {/* Merge / Unmerge & Reset Buttons */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
             {!onlineStats.isMerged ? (
               <button
                 type="button"
@@ -664,6 +691,18 @@ export default function QuickCountPage() {
                 <span>{mergingOnline ? 'Membatalkan...' : 'Batalkan Penambahan'}</span>
               </button>
             )}
+
+            {/* Tombol Reset Suara Online Pengetesan */}
+            <button
+              type="button"
+              onClick={handleResetOnlineVotes}
+              disabled={isLocked || onlineStats.totalOnlineVotesCast === 0}
+              className="flex items-center gap-1.5 px-3 py-2 bg-rose-950/20 hover:bg-rose-950/40 text-rose-400 border border-rose-900/40 rounded-xl text-xs font-bold transition disabled:opacity-40 cursor-pointer"
+              title="Reset seluruh suara online testing kembali ke 0 agar pemilih bisa mencoblos lagi"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Suara Online</span>
+            </button>
           </div>
         </div>
 

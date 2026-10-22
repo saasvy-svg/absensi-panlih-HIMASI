@@ -324,3 +324,91 @@ export async function getOnlineVotingStats(date?: string): Promise<OnlineVotingS
     isMerged,
   };
 }
+
+/**
+ * Menghapus / mereset data suara online untuk seorang mahasiswa tertentu (untuk keperluan testing)
+ */
+export async function removeStudentOnlineVote(nim: string): Promise<void> {
+  const cleanNim = String(nim).trim().toUpperCase();
+  const supabase = createAdminClient();
+
+  // 1. Hapus dari public.online_votes
+  try {
+    await supabase.from('online_votes').delete().ilike('nim', cleanNim);
+  } catch (e) {}
+
+  // 2. Hapus dari landing_settings.extra_texts
+  try {
+    const { data: landingData } = await supabase
+      .from('landing_settings')
+      .select('id, extra_texts')
+      .maybeSingle();
+
+    if (landingData) {
+      const extraTexts = landingData.extra_texts || {};
+      const votingRecords = { ...(extraTexts.voting_records || {}) };
+      delete votingRecords[cleanNim];
+
+      const fallbackVotes = (extraTexts.online_votes_fallback || []).filter(
+        (v: OnlineVote) => String(v.nim).trim().toUpperCase() !== cleanNim
+      );
+
+      await supabase
+        .from('landing_settings')
+        .update({
+          extra_texts: {
+            ...extraTexts,
+            voting_records: votingRecords,
+            online_votes_fallback: fallbackVotes,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', landingData.id);
+    }
+  } catch (e) {}
+}
+
+/**
+ * Mereset SEMUA data suara online pengetesan kembali ke 0
+ */
+export async function resetAllOnlineVotes(): Promise<void> {
+  const supabase = createAdminClient();
+
+  // 1. Hapus semua baris dari public.online_votes
+  try {
+    await supabase.from('online_votes').delete().neq('nim', '___DUMMY_NOT_EXIST___');
+  } catch (e) {}
+
+  // 2. Bersihkan extra_texts (online_votes_fallback, unmerged, dan voting_records online)
+  try {
+    const { data: landingData } = await supabase
+      .from('landing_settings')
+      .select('id, extra_texts')
+      .maybeSingle();
+
+    if (landingData) {
+      const extraTexts = landingData.extra_texts || {};
+      const votingRecords = { ...(extraTexts.voting_records || {}) };
+
+      // Hapus voting_records yang dicatat dari Online E-Voting
+      Object.keys(votingRecords).forEach((key) => {
+        if (votingRecords[key]?.notes === 'Online E-Voting') {
+          delete votingRecords[key];
+        }
+      });
+
+      await supabase
+        .from('landing_settings')
+        .update({
+          extra_texts: {
+            ...extraTexts,
+            voting_records: votingRecords,
+            online_votes_fallback: [],
+            online_votes_merged: false,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', landingData.id);
+    }
+  } catch (e) {}
+}

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/utils/supabase/admin';
 import { getWIBDate, getWIBLocaleString } from '@/lib/utils';
 import { resolveActiveDay } from '@/lib/dayHelper';
 import { normalizeAngkatan } from '@/utils/angkatan';
+import { removeStudentOnlineVote } from '@/lib/onlineVoting';
 
 export async function GET(request: NextRequest) {
   try {
@@ -174,8 +175,9 @@ export async function POST(request: NextRequest) {
         notes: notes || null,
       };
     } else {
-      // Un-vote / Undo
+      // Un-vote / Undo (hapus juga dari online_votes jika ada untuk keperluan testing)
       delete votingRecords[nimKey];
+      await removeStudentOnlineVote(nimKey);
     }
 
     const updatedExtra = {

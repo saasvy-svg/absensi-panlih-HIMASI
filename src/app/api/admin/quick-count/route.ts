@@ -4,7 +4,7 @@ import { getWIBDate, getWIBLocaleString } from '@/lib/utils';
 import { QuickCountCandidate, QuickCountConfig } from '@/types/database';
 import { getAuthClient } from '@/lib/googleSheets';
 import { google } from 'googleapis';
-import { getOnlineVotingStats } from '@/lib/onlineVoting';
+import { getOnlineVotingStats, resetAllOnlineVotes } from '@/lib/onlineVoting';
 
 const DEFAULT_CANDIDATES: QuickCountCandidate[] = [
   {
@@ -234,6 +234,15 @@ export async function POST(request: NextRequest) {
         message: 'Suara online berhasil ditarik kembali dari Quick Count.',
         quickCount: updatedQuickCount,
         isMerged: false,
+      });
+    }
+
+    // Aksi: Reset Semua Suara Online Pengetesan (Testing)
+    if (action === 'reset_online_votes') {
+      await resetAllOnlineVotes();
+      return NextResponse.json({
+        success: true,
+        message: 'Seluruh data suara pengetesan online berhasil direset ke 0! 🔄',
       });
     }
 
